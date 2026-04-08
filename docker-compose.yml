@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsappdivulga
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./whatsapp-profile:/app/whatsapp-profile
+    environment:
+      - GROUP_NAME=Nome do Grupo
+      - CHROME_DRIVER_PATH=/usr/bin/chromedriver
+      - CHROME_BINARY_PATH=/usr/bin/chromium
+      - WHATSAPP_PROFILE_DIR=/app/whatsapp-profile
+      - USE_WHATSAPP_AUTOMATION=True
+      - USE_SHOPEE_API=False
+    command: python main.py

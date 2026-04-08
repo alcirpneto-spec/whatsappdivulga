@@ -1,0 +1,5 @@
+selenium==4.19.0
+schedule==1.2.0
+pyperclip==1.8.2
+requests==2.31.0
+beautifulsoup4==4.12.2
