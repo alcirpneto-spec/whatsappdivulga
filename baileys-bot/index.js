@@ -69,10 +69,28 @@ function normalizePriceCandidate(value) {
   }
 
   let normalized = onlyDigits;
-  if (normalized.includes(",") && normalized.includes(".")) {
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+
+  if (hasComma && hasDot) {
+    // BR format with thousands dot and decimal comma: 2.399,90
     normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
-  } else if (normalized.includes(",")) {
-    normalized = normalized.replace(/,/g, ".");
+  } else if (hasComma) {
+    // If comma is followed by 1-2 digits, treat as decimal separator.
+    if (/,[0-9]{1,2}$/.test(normalized)) {
+      normalized = normalized.replace(/,/g, ".");
+    } else {
+      // Otherwise comma is likely thousands separator.
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (hasDot) {
+    // If dot is followed by 1-2 digits, treat as decimal separator.
+    if (/\.[0-9]{1,2}$/.test(normalized)) {
+      // keep as-is
+    } else {
+      // Otherwise dot is likely thousands separator (e.g., 2.399)
+      normalized = normalized.replace(/\./g, "");
+    }
   }
 
   const numeric = Number.parseFloat(normalized);
@@ -85,6 +103,47 @@ function normalizePriceCandidate(value) {
     currency: "BRL",
     maximumFractionDigits: 2,
   }).format(numeric);
+}
+
+function extractJsonLdOfferPrice(html) {
+  const scripts = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi) || [];
+
+  for (const scriptTag of scripts) {
+    const contentMatch = scriptTag.match(/>([\s\S]*?)<\/script>/i);
+    if (!contentMatch) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(contentMatch[1]);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+
+      for (const item of items) {
+        if (!item || typeof item !== "object") {
+          continue;
+        }
+
+        const offers = item.offers || item.mainEntity?.offers;
+        if (Array.isArray(offers) && offers.length > 0) {
+          const candidate = normalizePriceCandidate(offers[0]?.price);
+          if (candidate) {
+            return candidate;
+          }
+        }
+
+        if (offers && typeof offers === "object") {
+          const candidate = normalizePriceCandidate(offers.price);
+          if (candidate) {
+            return candidate;
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore malformed JSON-LD and keep searching.
+    }
+  }
+
+  return "";
 }
 
 function extractMercadoLivreItemId(value) {
@@ -226,9 +285,7 @@ async function fetchEnrichment(link) {
       extractMetaContent(html, "product:price:amount") ||
       extractMetaContent(html, "og:price:amount");
 
-    const regexPrice =
-      extractRegexValue(html, /"price"\s*:\s*"([0-9.,]+)"/i) ||
-      extractRegexValue(html, /R\$\s*([0-9.]+,[0-9]{2})/i);
+    const jsonLdOfferPrice = extractJsonLdOfferPrice(html);
 
     const metaTitle =
       extractMetaContent(html, "og:title") ||
@@ -246,7 +303,7 @@ async function fetchEnrichment(link) {
       normalizePriceCandidate(fromDbPrice) ||
       itemData?.priceText ||
       normalizePriceCandidate(metaPrice) ||
-      normalizePriceCandidate(regexPrice);
+      jsonLdOfferPrice;
 
     const finalProductName =
       itemData?.productName ||
@@ -255,7 +312,7 @@ async function fetchEnrichment(link) {
       cleanText(link.product_name);
 
     return {
-      priceText: finalPrice || formatPrice(fromDbPrice || metaPrice || regexPrice),
+      priceText: finalPrice || formatPrice(fromDbPrice || metaPrice),
       imageUrl: cleanText(fromDbImage || itemData?.imageUrl || metaImage),
       productName: finalProductName,
     };
