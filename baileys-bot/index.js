@@ -200,6 +200,16 @@ function extractMercadoLivreItemId(value) {
   return "";
 }
 
+function extractMercadoLivreSearchCode(value) {
+  const text = cleanText(value).toUpperCase();
+  if (!text) {
+    return "";
+  }
+
+  const match = text.match(/\b([A-Z0-9]{4,}-[A-Z0-9]{4,})\b/);
+  return match ? match[1] : "";
+}
+
 async function fetchMercadoLivreItemData(itemId) {
   if (!itemId) {
     return null;
@@ -225,6 +235,39 @@ async function fetchMercadoLivreItemData(itemId) {
     };
   } catch (error) {
     logger.warn({ err: error, itemId }, "Falha ao consultar API do Mercado Livre.");
+    return null;
+  }
+}
+
+async function fetchMercadoLivreSearchData(searchCode) {
+  if (!searchCode) {
+    return null;
+  }
+
+  try {
+    const encoded = encodeURIComponent(searchCode);
+    const response = await fetch(`https://api.mercadolibre.com/sites/MLB/search?q=${encoded}&limit=1`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const first = Array.isArray(data.results) && data.results.length > 0 ? data.results[0] : null;
+    if (!first) {
+      return null;
+    }
+
+    return {
+      productName: cleanText(first.title),
+      priceText: normalizePriceCandidate(first.price),
+      imageUrl: cleanText(first.thumbnail_id ? `https://http2.mlstatic.com/D_NQ_NP_${first.thumbnail_id}-O.webp` : first.thumbnail),
+    };
+  } catch (error) {
+    logger.warn({ err: error, searchCode }, "Falha ao consultar busca do Mercado Livre.");
     return null;
   }
 }
@@ -274,6 +317,10 @@ function extractRegexValue(html, regex) {
   return match ? cleanText(match[1]) : "";
 }
 
+function extractCanonicalUrl(html) {
+  return extractRegexValue(html, /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
+}
+
 async function fetchEnrichment(link) {
   const fromDbPrice = cleanText(link.price_text);
   const fromDbImage = cleanText(link.image_url);
@@ -312,11 +359,8 @@ async function fetchEnrichment(link) {
     const html = await response.text();
     const resolvedUrl = cleanText(response.url || link.affiliate_url);
 
-    const itemId =
-      extractMercadoLivreItemId(link.affiliate_url) ||
-      extractMercadoLivreItemId(resolvedUrl) ||
-      extractMercadoLivreItemId(html);
-    const itemData = await fetchMercadoLivreItemData(itemId);
+    const ogUrl = extractMetaContent(html, "og:url");
+    const canonicalUrl = extractCanonicalUrl(html);
 
     const metaPrice =
       extractMetaContent(html, "product:price:amount") ||
@@ -338,22 +382,42 @@ async function fetchEnrichment(link) {
       extractMetaContent(html, "twitter:image") ||
       extractMetaContent(html, "twitter:image:src");
 
+    const itemId =
+      extractMercadoLivreItemId(link.affiliate_url) ||
+      extractMercadoLivreItemId(resolvedUrl) ||
+      extractMercadoLivreItemId(ogUrl) ||
+      extractMercadoLivreItemId(canonicalUrl) ||
+      extractMercadoLivreItemId(metaImage) ||
+      extractMercadoLivreItemId(html);
+    const itemData = await fetchMercadoLivreItemData(itemId);
+
+    const searchCode =
+      extractMercadoLivreSearchCode(link.affiliate_url) ||
+      extractMercadoLivreSearchCode(resolvedUrl) ||
+      extractMercadoLivreSearchCode(html);
+    const searchData = itemData ? null : await fetchMercadoLivreSearchData(searchCode);
+    const primaryData = itemData || searchData;
+
     const finalPrice =
       normalizePriceCandidate(fromDbPrice) ||
-      itemData?.priceText ||
+      primaryData?.priceText ||
       normalizePriceCandidate(metaPrice) ||
       jsonLdOfferPrice ||
       htmlBestPrice;
 
     const finalProductName =
-      itemData?.productName ||
+      primaryData?.productName ||
       jsonLdName ||
       metaTitle ||
       cleanText(link.product_name);
 
+    if (!finalPrice) {
+      logger.warn({ linkId: link.id, itemId, searchCode }, "Preco nao encontrado no enrichment desse link.");
+    }
+
     return {
       priceText: finalPrice || formatPrice(fromDbPrice || metaPrice),
-      imageUrl: cleanText(fromDbImage || itemData?.imageUrl || metaImage),
+      imageUrl: cleanText(fromDbImage || primaryData?.imageUrl || metaImage),
       productName: finalProductName,
     };
   } catch (error) {
