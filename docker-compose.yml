@@ -1,10 +1,48 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: whatsappdivulga-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=whatsappdivulga
+      - POSTGRES_USER=bot
+      - POSTGRES_PASSWORD=botpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d whatsappdivulga"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  baileys-worker:
+    build: ./baileys-bot
+    container_name: whatsappdivulga-baileys
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://bot:botpass@db:5432/whatsappdivulga
+      - WHATSAPP_GROUP_NAME=Nome do Grupo
+      - BAILEYS_GROUP_JID=
+      - POLL_INTERVAL_SECONDS=15
+      - MAX_LINKS_PER_CYCLE=10
+      - LOG_LEVEL=info
+    volumes:
+      - ./baileys-auth:/app/auth
+
   whatsapp-bot:
     build: .
     container_name: whatsappdivulga
     restart: unless-stopped
+    profiles:
+      - legacy-python
     volumes:
       - ./:/app
       - ./data:/app/data
@@ -17,3 +55,6 @@ services:
       - USE_WHATSAPP_AUTOMATION=True
       - USE_SHOPEE_API=False
     command: python main.py
+
+volumes:
+  postgres_data:

@@ -155,3 +155,53 @@ Com acesso à API de afiliados da Shopee, o sistema pode operar em **modo autom�
 4. Rode: `python main.py`
 
 O sistema passará a descobrir e promover produtos automaticamente!
+
+## Modo Baileys + Banco de Dados (Mercado Livre)
+
+Este modo sobe dois containers no Docker:
+- `db` (PostgreSQL): onde você insere os links de afiliado
+- `baileys-worker`: conecta no WhatsApp com Baileys e envia links novos no grupo
+
+### Como subir
+
+1. Suba os containers:
+
+```bash
+docker compose up --build
+```
+
+2. No primeiro start, o `baileys-worker` vai imprimir um QR Code no log.
+3. Escaneie o QR com seu WhatsApp para autenticar a sessão.
+4. A sessão fica persistida na pasta `baileys-auth/`.
+
+### Configuração do grupo
+
+No `docker-compose.yml`, configure uma das opções abaixo no serviço `baileys-worker`:
+- `WHATSAPP_GROUP_NAME=Nome do Grupo` (busca pelo nome do grupo)
+- `BAILEYS_GROUP_JID=1203xxxxxxxxxxxx@g.us` (ID direto do grupo)
+
+### Inserindo links no banco
+
+A tabela usada é `affiliate_links`.
+
+Exemplo de insert:
+
+```sql
+INSERT INTO affiliate_links (product_name, affiliate_url, source)
+VALUES
+  ('Fone Bluetooth X', 'https://mercadolivre.com/afiliado/abc123', 'mercado_livre');
+```
+
+Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localhost:5432`), com:
+- banco: `whatsappdivulga`
+- usuário: `bot`
+- senha: `botpass`
+
+### Como o worker processa
+
+- Busca registros com `processed = FALSE`
+- Envia mensagem no grupo
+- Marca como enviado (`processed = TRUE`, `sent_at = NOW()`)
+- Em caso de erro, incrementa `attempts` e salva `last_error`
+
+Assim, sempre que entrar link novo na tabela, ele será enviado automaticamente.
