@@ -57,6 +57,112 @@ function formatPrice(value) {
   return `R$ ${txt}`;
 }
 
+function normalizePriceCandidate(value) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return "";
+  }
+
+  const onlyDigits = raw.replace(/[^\d.,]/g, "");
+  if (!onlyDigits) {
+    return "";
+  }
+
+  let normalized = onlyDigits;
+  if (normalized.includes(",") && normalized.includes(".")) {
+    normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(/,/g, ".");
+  }
+
+  const numeric = Number.parseFloat(normalized);
+  if (Number.isNaN(numeric) || numeric <= 0) {
+    return "";
+  }
+
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  }).format(numeric);
+}
+
+function extractMercadoLivreItemId(value) {
+  const text = cleanText(value).toUpperCase();
+  if (!text) {
+    return "";
+  }
+
+  const patterns = [/\b(ML[A-Z]-?\d{6,})\b/, /\b(MLB-?\d{6,})\b/];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].replace("-", "");
+    }
+  }
+
+  return "";
+}
+
+async function fetchMercadoLivreItemData(itemId) {
+  if (!itemId) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const firstPicture = Array.isArray(data.pictures) && data.pictures.length > 0 ? data.pictures[0] : null;
+
+    return {
+      productName: cleanText(data.title),
+      priceText: normalizePriceCandidate(data.price),
+      imageUrl: cleanText((firstPicture && (firstPicture.secure_url || firstPicture.url)) || data.thumbnail_secure_url || data.thumbnail),
+    };
+  } catch (error) {
+    logger.warn({ err: error, itemId }, "Falha ao consultar API do Mercado Livre.");
+    return null;
+  }
+}
+
+function extractJsonLdProductName(html) {
+  const scripts = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi) || [];
+
+  for (const scriptTag of scripts) {
+    const contentMatch = scriptTag.match(/>([\s\S]*?)<\/script>/i);
+    if (!contentMatch) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(contentMatch[1]);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      for (const item of items) {
+        if (item && typeof item === "object") {
+          if (cleanText(item.name)) {
+            return cleanText(item.name);
+          }
+          if (item.mainEntity && cleanText(item.mainEntity.name)) {
+            return cleanText(item.mainEntity.name);
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore invalid JSON-LD blocks and keep trying other blocks.
+    }
+  }
+
+  return "";
+}
+
 function extractMetaContent(html, key) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = new RegExp(
@@ -78,8 +184,9 @@ async function fetchEnrichment(link) {
 
   if (fromDbPrice && fromDbImage) {
     return {
-      priceText: formatPrice(fromDbPrice),
+      priceText: normalizePriceCandidate(fromDbPrice) || formatPrice(fromDbPrice),
       imageUrl: fromDbImage,
+      productName: cleanText(link.product_name),
     };
   }
 
@@ -107,30 +214,57 @@ async function fetchEnrichment(link) {
     }
 
     const html = await response.text();
+    const resolvedUrl = cleanText(response.url || link.affiliate_url);
+
+    const itemId =
+      extractMercadoLivreItemId(link.affiliate_url) ||
+      extractMercadoLivreItemId(resolvedUrl) ||
+      extractMercadoLivreItemId(html);
+    const itemData = await fetchMercadoLivreItemData(itemId);
 
     const metaPrice =
       extractMetaContent(html, "product:price:amount") ||
-      extractMetaContent(html, "og:price:amount") ||
-      extractMetaContent(html, "twitter:data1");
+      extractMetaContent(html, "og:price:amount");
 
     const regexPrice =
       extractRegexValue(html, /"price"\s*:\s*"([0-9.,]+)"/i) ||
       extractRegexValue(html, /R\$\s*([0-9.]+,[0-9]{2})/i);
+
+    const metaTitle =
+      extractMetaContent(html, "og:title") ||
+      extractMetaContent(html, "twitter:title") ||
+      extractMetaContent(html, "title");
+
+    const jsonLdName = extractJsonLdProductName(html);
 
     const metaImage =
       extractMetaContent(html, "og:image") ||
       extractMetaContent(html, "twitter:image") ||
       extractMetaContent(html, "twitter:image:src");
 
+    const finalPrice =
+      normalizePriceCandidate(fromDbPrice) ||
+      itemData?.priceText ||
+      normalizePriceCandidate(metaPrice) ||
+      normalizePriceCandidate(regexPrice);
+
+    const finalProductName =
+      itemData?.productName ||
+      jsonLdName ||
+      metaTitle ||
+      cleanText(link.product_name);
+
     return {
-      priceText: formatPrice(fromDbPrice || metaPrice || regexPrice),
-      imageUrl: cleanText(fromDbImage || metaImage),
+      priceText: finalPrice || formatPrice(fromDbPrice || metaPrice || regexPrice),
+      imageUrl: cleanText(fromDbImage || itemData?.imageUrl || metaImage),
+      productName: finalProductName,
     };
   } catch (error) {
     logger.warn({ err: error, linkId: link.id }, "Falha ao enriquecer dados do link. Vou enviar sem imagem/preco se necessario.");
     return {
-      priceText: formatPrice(fromDbPrice),
+      priceText: normalizePriceCandidate(fromDbPrice) || formatPrice(fromDbPrice),
       imageUrl: fromDbImage,
+      productName: cleanText(link.product_name),
     };
   }
 }
@@ -140,10 +274,11 @@ async function persistEnrichment(id, enrichment) {
     `
       UPDATE affiliate_links
       SET price_text = COALESCE(NULLIF($2, ''), price_text),
-          image_url = COALESCE(NULLIF($3, ''), image_url)
+          image_url = COALESCE(NULLIF($3, ''), image_url),
+          product_name = COALESCE(NULLIF($4, ''), product_name)
       WHERE id = $1
     `,
-    [id, enrichment.priceText || "", enrichment.imageUrl || ""]
+    [id, enrichment.priceText || "", enrichment.imageUrl || "", enrichment.productName || ""]
   );
 }
 
@@ -243,11 +378,12 @@ async function resolveGroupJid(sock) {
 function buildMessage(link, enrichment) {
   const sourceLabel = `Fonte: ${prettySource(link.source)}`;
   const priceLabel = enrichment.priceText ? `Preco: ${enrichment.priceText}` : "";
+  const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
 
   return [
     "Oferta feita pra voce!",
     "",
-    `Produto: ${link.product_name}`,
+    `Produto: ${productName}`,
     priceLabel,
     sourceLabel,
     `Link: ${link.affiliate_url}`,
