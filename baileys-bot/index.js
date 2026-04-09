@@ -137,6 +137,7 @@ async function startBaileysConnection() {
 
   let isReady = false;
   let shouldReconnect = true;
+  let reconnectDelayMs = 0;
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -163,11 +164,16 @@ async function startBaileysConnection() {
 
       if (statusCode === DisconnectReason.loggedOut) {
         shouldReconnect = false;
+        reconnectDelayMs = 5000;
         logger.error("Sessao desconectada (loggedOut). Remova ./auth e autentique novamente.");
         return;
       }
 
-      logger.warn({ statusCode }, "Conexao fechada. Tentando reconectar...");
+      // Any close event needs a fresh socket instance. Keep the reason in logs and
+      // break the current loop so run() can create a new connection object.
+      shouldReconnect = false;
+      reconnectDelayMs = statusCode === DisconnectReason.restartRequired ? 1000 : 5000;
+      logger.warn({ statusCode }, "Conexao fechada. Vou recriar a sessao...");
     }
   });
 
@@ -175,6 +181,7 @@ async function startBaileysConnection() {
     sock,
     isReady: () => isReady,
     shouldReconnect: () => shouldReconnect,
+    reconnectDelayMs: () => reconnectDelayMs,
   };
 }
 
@@ -222,8 +229,9 @@ async function run() {
       }
     }
 
-    logger.warn("Reconectando sessao em 5 segundos...");
-    await delay(5000);
+    const waitMs = connection.reconnectDelayMs();
+    logger.warn(`Reconectando sessao em ${waitMs}ms...`);
+    await delay(waitMs);
   }
 }
 
