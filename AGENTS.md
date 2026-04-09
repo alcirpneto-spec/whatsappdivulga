@@ -80,3 +80,12 @@ VALUES
 - Fazer mudancas pequenas e validaveis.
 - Evitar regressao no que ja esta funcionando.
 - Sempre deixar comandos de teste prontos para o usuario executar no servidor.
+
+## Proximo passo desejado (backlog)
+- Criar uma forma simples de cadastro de links sem SQL manual.
+- Entregar um front-end + API para inserir na tabela `affiliate_links`.
+- Fluxo esperado no front:
+  - Usuario informa `affiliate_url` (link)
+  - Usuario informa um `codigo/id` (ex.: `1MZKB6-53Q4`) para `product_name`
+  - API grava no PostgreSQL com `source = mercado_livre`
+- Objetivo: evitar uso manual de `INSERT` no terminal.
