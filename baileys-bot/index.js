@@ -24,6 +24,129 @@ const pool = new Pool({ connectionString: DATABASE_URL });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function prettySource(source) {
+  const value = String(source || "mercado_livre").replace(/_/g, " ").trim();
+  if (!value) {
+    return "Mercado Livre";
+  }
+
+  return value
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function cleanText(value, fallback = "") {
+  if (!value) {
+    return fallback;
+  }
+
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function formatPrice(value) {
+  const txt = cleanText(value);
+  if (!txt) {
+    return "";
+  }
+
+  if (/^R\$/i.test(txt)) {
+    return txt;
+  }
+
+  return `R$ ${txt}`;
+}
+
+function extractMetaContent(html, key) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+    "i"
+  );
+  const match = html.match(regex);
+  return match ? cleanText(match[1]) : "";
+}
+
+function extractRegexValue(html, regex) {
+  const match = html.match(regex);
+  return match ? cleanText(match[1]) : "";
+}
+
+async function fetchEnrichment(link) {
+  const fromDbPrice = cleanText(link.price_text);
+  const fromDbImage = cleanText(link.image_url);
+
+  if (fromDbPrice && fromDbImage) {
+    return {
+      priceText: formatPrice(fromDbPrice),
+      imageUrl: fromDbImage,
+    };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch(link.affiliate_url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        accept: "text/html,application/xhtml+xml",
+      },
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return {
+        priceText: formatPrice(fromDbPrice),
+        imageUrl: fromDbImage,
+      };
+    }
+
+    const html = await response.text();
+
+    const metaPrice =
+      extractMetaContent(html, "product:price:amount") ||
+      extractMetaContent(html, "og:price:amount") ||
+      extractMetaContent(html, "twitter:data1");
+
+    const regexPrice =
+      extractRegexValue(html, /"price"\s*:\s*"([0-9.,]+)"/i) ||
+      extractRegexValue(html, /R\$\s*([0-9.]+,[0-9]{2})/i);
+
+    const metaImage =
+      extractMetaContent(html, "og:image") ||
+      extractMetaContent(html, "twitter:image") ||
+      extractMetaContent(html, "twitter:image:src");
+
+    return {
+      priceText: formatPrice(fromDbPrice || metaPrice || regexPrice),
+      imageUrl: cleanText(fromDbImage || metaImage),
+    };
+  } catch (error) {
+    logger.warn({ err: error, linkId: link.id }, "Falha ao enriquecer dados do link. Vou enviar sem imagem/preco se necessario.");
+    return {
+      priceText: formatPrice(fromDbPrice),
+      imageUrl: fromDbImage,
+    };
+  }
+}
+
+async function persistEnrichment(id, enrichment) {
+  await pool.query(
+    `
+      UPDATE affiliate_links
+      SET price_text = COALESCE(NULLIF($2, ''), price_text),
+          image_url = COALESCE(NULLIF($3, ''), image_url)
+      WHERE id = $1
+    `,
+    [id, enrichment.priceText || "", enrichment.imageUrl || ""]
+  );
+}
+
 async function ensureSchema() {
   const query = `
     CREATE TABLE IF NOT EXISTS affiliate_links (
@@ -31,12 +154,17 @@ async function ensureSchema() {
       product_name TEXT NOT NULL,
       affiliate_url TEXT NOT NULL,
       source TEXT DEFAULT 'mercado_livre',
+      price_text TEXT,
+      image_url TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       processed BOOLEAN NOT NULL DEFAULT FALSE,
       sent_at TIMESTAMPTZ,
       attempts INTEGER NOT NULL DEFAULT 0,
       last_error TEXT
     );
+
+    ALTER TABLE affiliate_links ADD COLUMN IF NOT EXISTS price_text TEXT;
+    ALTER TABLE affiliate_links ADD COLUMN IF NOT EXISTS image_url TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_affiliate_links_pending
       ON affiliate_links (processed, created_at);
@@ -75,7 +203,7 @@ async function markAsFailed(id, errorMessage) {
 async function getPendingLinks(limit) {
   const result = await pool.query(
     `
-      SELECT id, product_name, affiliate_url, source, created_at, attempts
+      SELECT id, product_name, affiliate_url, source, price_text, image_url, created_at, attempts
       FROM affiliate_links
       WHERE processed = FALSE
       ORDER BY created_at ASC
@@ -112,16 +240,20 @@ async function resolveGroupJid(sock) {
   return group.id;
 }
 
-function buildMessage(link) {
-  const sourceLabel = link.source ? `Fonte: ${link.source}` : "Fonte: mercado_livre";
+function buildMessage(link, enrichment) {
+  const sourceLabel = `Fonte: ${prettySource(link.source)}`;
+  const priceLabel = enrichment.priceText ? `Preco: ${enrichment.priceText}` : "";
 
   return [
-    "Oferta nova de afiliado",
+    "Oferta feita pra voce!",
     "",
     `Produto: ${link.product_name}`,
+    priceLabel,
     sourceLabel,
     `Link: ${link.affiliate_url}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function startBaileysConnection() {
@@ -217,8 +349,25 @@ async function run() {
 
       for (const link of pendingLinks) {
         try {
-          const message = buildMessage(link);
-          await connection.sock.sendMessage(groupJid, { text: message });
+          const enrichment = await fetchEnrichment(link);
+          await persistEnrichment(link.id, enrichment);
+
+          const message = buildMessage(link, enrichment);
+
+          if (enrichment.imageUrl) {
+            try {
+              await connection.sock.sendMessage(groupJid, {
+                image: { url: enrichment.imageUrl },
+                caption: message,
+              });
+            } catch (imageError) {
+              logger.warn({ err: imageError, linkId: link.id }, "Falha ao enviar imagem. Vou enviar texto.");
+              await connection.sock.sendMessage(groupJid, { text: message });
+            }
+          } else {
+            await connection.sock.sendMessage(groupJid, { text: message });
+          }
+
           await markAsSent(link.id);
           logger.info(`Link ${link.id} enviado com sucesso.`);
         } catch (error) {

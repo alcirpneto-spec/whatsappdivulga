@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS affiliate_links (
     product_name TEXT NOT NULL,
     affiliate_url TEXT NOT NULL,
     source TEXT DEFAULT 'mercado_livre',
+    price_text TEXT,
+    image_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed BOOLEAN NOT NULL DEFAULT FALSE,
     sent_at TIMESTAMPTZ,

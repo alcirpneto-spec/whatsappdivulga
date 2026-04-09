@@ -187,10 +187,18 @@ A tabela usada é `affiliate_links`.
 Exemplo de insert:
 
 ```sql
-INSERT INTO affiliate_links (product_name, affiliate_url, source)
+INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url)
 VALUES
-  ('Fone Bluetooth X', 'https://mercadolivre.com/afiliado/abc123', 'mercado_livre');
+  (
+    'Fone Bluetooth X',
+    'https://mercadolivre.com/afiliado/abc123',
+    'mercado_livre',
+    '129,90',
+    'https://http2.mlstatic.com/D_NQ_NP_123456-MLB00000000000_012024-O.webp'
+  );
 ```
+
+Se `price_text` e `image_url` nao forem enviados no insert, o worker tenta extrair automaticamente do link.
 
 Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localhost:5432`), com:
 - banco: `whatsappdivulga`
@@ -200,6 +208,8 @@ Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localho
 ### Como o worker processa
 
 - Busca registros com `processed = FALSE`
+- Monta mensagem no formato "Oferta feita pra voce!"
+- Tenta incluir preco e imagem do produto
 - Envia mensagem no grupo
 - Marca como enviado (`processed = TRUE`, `sent_at = NOW()`)
 - Em caso de erro, incrementa `attempts` e salva `last_error`
