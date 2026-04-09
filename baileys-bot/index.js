@@ -367,6 +367,12 @@ async function fetchEnrichment(link) {
       extractMetaContent(html, "og:price:amount") ||
       extractMetaContent(html, "twitter:data1");
 
+    const metaDescription =
+      extractMetaContent(html, "og:description") ||
+      extractMetaContent(html, "description") ||
+      extractMetaContent(html, "twitter:description");
+    const metaDescriptionPrice = normalizePriceCandidate(metaDescription);
+
     const jsonLdOfferPrice = extractJsonLdOfferPrice(html);
     const htmlBestPrice = extractBestPriceFromHtml(html);
 
@@ -394,6 +400,7 @@ async function fetchEnrichment(link) {
     const searchCode =
       extractMercadoLivreSearchCode(link.affiliate_url) ||
       extractMercadoLivreSearchCode(resolvedUrl) ||
+      extractMercadoLivreSearchCode(link.product_name) ||
       extractMercadoLivreSearchCode(html);
     const searchData = itemData ? null : await fetchMercadoLivreSearchData(searchCode);
     const primaryData = itemData || searchData;
@@ -402,6 +409,7 @@ async function fetchEnrichment(link) {
       normalizePriceCandidate(fromDbPrice) ||
       primaryData?.priceText ||
       normalizePriceCandidate(metaPrice) ||
+      metaDescriptionPrice ||
       jsonLdOfferPrice ||
       htmlBestPrice;
 
