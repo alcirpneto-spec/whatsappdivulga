@@ -25,9 +25,9 @@ const pool = new Pool({ connectionString: DATABASE_URL });
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function prettySource(source) {
-  const value = String(source || "mercado_livre").replace(/_/g, " ").trim();
+  const value = String(source || "").replace(/_/g, " ").trim();
   if (!value) {
-    return "Mercado Livre";
+    return "Marketplace";
   }
 
   return value
@@ -432,6 +432,73 @@ function extractFeaturedProductUrl(html) {
   return genericHref;
 }
 
+function inferSource(source, url) {
+  const explicit = cleanText(source).toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+
+  const lowerUrl = cleanText(url).toLowerCase();
+  if (/(^|\.)amazon\./i.test(lowerUrl) || lowerUrl.includes("amzn.to")) {
+    return "amazon";
+  }
+
+  if (
+    lowerUrl.includes("mercadolivre") ||
+    lowerUrl.includes("mercadolibre") ||
+    lowerUrl.includes("meli.la")
+  ) {
+    return "mercado_livre";
+  }
+
+  if (
+    lowerUrl.includes("shopee") ||
+    lowerUrl.includes("s.shopee") ||
+    lowerUrl.includes("shp.ee")
+  ) {
+    return "shopee";
+  }
+
+  return "marketplace";
+}
+
+function extractAmazonPrice(html) {
+  const selectors = [
+    /id=["']priceblock_ourprice["'][^>]*>\s*([^<]+)</i,
+    /id=["']priceblock_dealprice["'][^>]*>\s*([^<]+)</i,
+    /id=["']priceblock_saleprice["'][^>]*>\s*([^<]+)</i,
+    /class=["'][^"']*a-offscreen[^"']*["'][^>]*>\s*([^<]+)</i,
+  ];
+
+  for (const selector of selectors) {
+    const raw = extractRegexValue(html, selector);
+    const normalized = normalizePriceCandidate(raw);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
+function extractShopeePrice(html) {
+  const selectors = [
+    /class=["'][^"']*pqTWkA[^"']*["'][^>]*>\s*([^<]+)</i,
+    /class=["'][^"']*IZPeQz[^"']*["'][^>]*>\s*([^<]+)</i,
+    /itemprop=["']price["'][^>]*content=["']([^"']+)["']/i,
+  ];
+
+  for (const selector of selectors) {
+    const raw = extractRegexValue(html, selector);
+    const normalized = normalizePriceCandidate(raw);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
 async function fetchFeaturedProductData(productUrl) {
   if (!productUrl) {
     return null;
@@ -550,28 +617,46 @@ async function fetchEnrichment(link) {
       extractMetaContent(html, "twitter:image") ||
       extractMetaContent(html, "twitter:image:src");
 
-    const itemId =
-      extractMercadoLivreItemId(link.affiliate_url) ||
-      extractMercadoLivreItemId(resolvedUrl) ||
-      extractMercadoLivreItemId(ogUrl) ||
-      extractMercadoLivreItemId(canonicalUrl) ||
-      extractMercadoLivreItemId(metaImage) ||
-      extractMercadoLivreItemId(html);
-    const itemData = await fetchMercadoLivreItemData(itemId);
+    const source = inferSource(link.source, resolvedUrl || link.affiliate_url);
+    const isMercadoLivre = source === "mercado_livre";
+    const isAmazon = source === "amazon";
+    const isShopee = source === "shopee";
 
-    const searchCode =
-      extractMercadoLivreSearchCode(link.affiliate_url) ||
-      extractMercadoLivreSearchCode(resolvedUrl) ||
-      extractMercadoLivreSearchCode(link.product_name) ||
-      extractMercadoLivreSearchCode(html);
-    const searchData = itemData ? null : await fetchMercadoLivreSearchData(searchCode);
-    const primaryData = itemData || searchData;
-    const featuredData = await fetchFeaturedProductData(featuredProductUrl);
+    let itemId = "";
+    let searchCode = "";
+    let primaryData = null;
+    let featuredData = null;
+
+    if (isMercadoLivre) {
+      itemId =
+        extractMercadoLivreItemId(link.affiliate_url) ||
+        extractMercadoLivreItemId(resolvedUrl) ||
+        extractMercadoLivreItemId(ogUrl) ||
+        extractMercadoLivreItemId(canonicalUrl) ||
+        extractMercadoLivreItemId(metaImage) ||
+        extractMercadoLivreItemId(html);
+      const itemData = await fetchMercadoLivreItemData(itemId);
+
+      searchCode =
+        extractMercadoLivreSearchCode(link.affiliate_url) ||
+        extractMercadoLivreSearchCode(resolvedUrl) ||
+        extractMercadoLivreSearchCode(link.product_name) ||
+        extractMercadoLivreSearchCode(html);
+      const searchData = itemData ? null : await fetchMercadoLivreSearchData(searchCode);
+      primaryData = itemData || searchData;
+      featuredData = await fetchFeaturedProductData(featuredProductUrl);
+    }
+
+    const sourceSpecificPrice =
+      (isAmazon && extractAmazonPrice(html)) ||
+      (isShopee && extractShopeePrice(html)) ||
+      "";
 
     const finalPrice =
       normalizePriceCandidate(fromDbPrice) ||
       primaryData?.priceText ||
       featuredData?.priceText ||
+      sourceSpecificPrice ||
       normalizePriceCandidate(metaPrice) ||
       metaDescriptionPrice ||
       jsonLdOfferPrice ||
@@ -587,7 +672,7 @@ async function fetchEnrichment(link) {
     ]);
 
     if (!finalPrice) {
-      logger.warn({ linkId: link.id, itemId, searchCode }, "Preco nao encontrado no enrichment desse link.");
+      logger.warn({ linkId: link.id, source, itemId, searchCode }, "Preco nao encontrado no enrichment desse link.");
     }
 
     return {
@@ -712,7 +797,7 @@ async function resolveGroupJid(sock) {
 }
 
 function buildMessage(link, enrichment) {
-  const sourceLabel = `Fonte: ${prettySource(link.source)}`;
+  const sourceLabel = `Fonte: ${prettySource(inferSource(link.source, link.affiliate_url))}`;
   const priceLabel = enrichment.priceText ? `Preço: ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
 

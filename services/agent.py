@@ -26,6 +26,8 @@ class DailyMarketingAgent:
                 logging.error("Nenhum produto descoberto via API Shopee.")
                 return
 
+            messages = [self.analyzer.build_message(item) for item in best_products]
+
         else:
             # Modo manual: usar links fornecidos ou análise de vendas
             new_links = self.fetcher.load_new_links()

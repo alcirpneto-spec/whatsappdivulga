@@ -156,7 +156,7 @@ Com acesso à API de afiliados da Shopee, o sistema pode operar em **modo autom�
 
 O sistema passará a descobrir e promover produtos automaticamente!
 
-## Modo Baileys + Banco de Dados (Mercado Livre)
+## Modo Baileys + Banco de Dados (Mercado Livre, Amazon e Shopee)
 
 Este modo sobe dois containers no Docker:
 - `db` (PostgreSQL): onde você insere os links de afiliado
@@ -198,7 +198,17 @@ VALUES
   );
 ```
 
-Se `price_text` e `image_url` nao forem enviados no insert, o worker tenta extrair automaticamente do link.
+Exemplos para outras fontes:
+
+```sql
+INSERT INTO affiliate_links (product_name, affiliate_url, source)
+VALUES
+  ('Kindle 16GB', 'https://amzn.to/seu-link-afiliado', 'amazon'),
+  ('Escova Secadora', 'https://s.shopee.com.br/seu-link-afiliado', 'shopee');
+```
+
+Se `price_text` e `image_url` não forem enviados no insert, o worker tenta extrair automaticamente do link.
+Para links com bloqueio anti-bot, o recomendado é enviar `price_text` no insert para garantir consistência da oferta.
 
 Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localhost:5432`), com:
 - banco: `whatsappdivulga`
@@ -209,7 +219,8 @@ Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localho
 
 - Busca registros com `processed = FALSE`
 - Monta mensagem no formato "Oferta feita pra você!"
-- Tenta incluir preço e imagem do produto
+- Detecta a origem (`source`) entre Mercado Livre, Amazon e Shopee (ou infere pela URL)
+- Tenta incluir preço e imagem do produto com estratégia por marketplace
 - Envia mensagem no grupo
 - Marca como enviado (`processed = TRUE`, `sent_at = NOW()`)
 - Em caso de erro, incrementa `attempts` e salva `last_error`
