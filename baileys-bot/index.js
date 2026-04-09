@@ -368,6 +368,51 @@ function extractRegexValue(html, regex) {
   return match ? cleanText(match[1]) : "";
 }
 
+function isGenericProductName(name) {
+  const value = cleanText(name).toLowerCase();
+  if (!value) {
+    return true;
+  }
+
+  const genericNames = [
+    "mercado livre",
+    "perfil social",
+    "social",
+    "produto",
+    "item",
+  ];
+
+  if (genericNames.includes(value)) {
+    return true;
+  }
+
+  // Generic titles that include the marketplace name but no product context.
+  if (value.startsWith("mercado livre") && value.length <= 24) {
+    return true;
+  }
+
+  return false;
+}
+
+function pickBestProductName(candidates) {
+  for (const candidate of candidates) {
+    const value = cleanText(candidate);
+    if (!isGenericProductName(value)) {
+      return value;
+    }
+  }
+
+  // Fallback to first non-empty value if all are generic.
+  for (const candidate of candidates) {
+    const value = cleanText(candidate);
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function extractCanonicalUrl(html) {
   return extractRegexValue(html, /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
 }
@@ -533,12 +578,13 @@ async function fetchEnrichment(link) {
       andesAriaPrice ||
       htmlBestPrice;
 
-    const finalProductName =
-      primaryData?.productName ||
-      featuredData?.productName ||
-      jsonLdName ||
-      metaTitle ||
-      cleanText(link.product_name);
+    const finalProductName = pickBestProductName([
+      primaryData?.productName,
+      featuredData?.productName,
+      jsonLdName,
+      metaTitle,
+      cleanText(link.product_name),
+    ]);
 
     if (!finalPrice) {
       logger.warn({ linkId: link.id, itemId, searchCode }, "Preco nao encontrado no enrichment desse link.");
