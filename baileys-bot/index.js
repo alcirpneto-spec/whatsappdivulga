@@ -372,6 +372,70 @@ function extractCanonicalUrl(html) {
   return extractRegexValue(html, /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
 }
 
+function extractFeaturedProductUrl(html) {
+  // Prefer the highlighted main card of affiliate page.
+  const listCardHref = extractRegexValue(
+    html,
+    /poly-card--list[\s\S]*?<a[^>]+href=["']([^"']+mercadolivre\.com\.br[^"']+)["']/i
+  );
+  if (listCardHref) {
+    return listCardHref;
+  }
+
+  // Fallback: first product permalink from this page.
+  const genericHref = extractRegexValue(html, /<a[^>]+href=["']([^"']+mercadolivre\.com\.br[^"']+)["'][^>]*class=["'][^"']*poly-component__title/i);
+  return genericHref;
+}
+
+async function fetchFeaturedProductData(productUrl) {
+  if (!productUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(productUrl, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        accept: "text/html,application/xhtml+xml",
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const html = await response.text();
+
+    const priceFromMeta =
+      normalizePriceCandidate(extractMetaContent(html, "product:price:amount")) ||
+      normalizePriceCandidate(extractMetaContent(html, "og:price:amount")) ||
+      extractJsonLdOfferPrice(html) ||
+      extractAndesAriaPrice(html) ||
+      extractBestPriceFromHtml(html);
+
+    const titleFromMeta =
+      extractMetaContent(html, "og:title") ||
+      extractMetaContent(html, "twitter:title") ||
+      extractRegexValue(html, /<title>([^<]+)<\/title>/i);
+
+    const imageFromMeta =
+      extractMetaContent(html, "og:image") ||
+      extractMetaContent(html, "twitter:image") ||
+      extractMetaContent(html, "twitter:image:src");
+
+    return {
+      priceText: priceFromMeta,
+      productName: cleanText(titleFromMeta),
+      imageUrl: cleanText(imageFromMeta),
+    };
+  } catch (error) {
+    logger.warn({ err: error, productUrl }, "Falha ao consultar pagina do produto destacado.");
+    return null;
+  }
+}
+
 async function fetchEnrichment(link) {
   const fromDbPrice = cleanText(link.price_text);
   const fromDbImage = cleanText(link.image_url);
@@ -412,6 +476,7 @@ async function fetchEnrichment(link) {
 
     const ogUrl = extractMetaContent(html, "og:url");
     const canonicalUrl = extractCanonicalUrl(html);
+    const featuredProductUrl = extractFeaturedProductUrl(html);
 
     const metaPrice =
       extractMetaContent(html, "product:price:amount") ||
@@ -456,10 +521,12 @@ async function fetchEnrichment(link) {
       extractMercadoLivreSearchCode(html);
     const searchData = itemData ? null : await fetchMercadoLivreSearchData(searchCode);
     const primaryData = itemData || searchData;
+    const featuredData = await fetchFeaturedProductData(featuredProductUrl);
 
     const finalPrice =
       normalizePriceCandidate(fromDbPrice) ||
       primaryData?.priceText ||
+      featuredData?.priceText ||
       normalizePriceCandidate(metaPrice) ||
       metaDescriptionPrice ||
       jsonLdOfferPrice ||
@@ -468,6 +535,7 @@ async function fetchEnrichment(link) {
 
     const finalProductName =
       primaryData?.productName ||
+      featuredData?.productName ||
       jsonLdName ||
       metaTitle ||
       cleanText(link.product_name);
@@ -478,7 +546,7 @@ async function fetchEnrichment(link) {
 
     return {
       priceText: finalPrice || formatPrice(fromDbPrice || metaPrice),
-      imageUrl: cleanText(fromDbImage || primaryData?.imageUrl || metaImage),
+      imageUrl: cleanText(fromDbImage || primaryData?.imageUrl || featuredData?.imageUrl || metaImage),
       productName: finalProductName,
     };
   } catch (error) {
