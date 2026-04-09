@@ -228,9 +228,44 @@ async function fetchMercadoLivreItemData(itemId) {
     const data = await response.json();
     const firstPicture = Array.isArray(data.pictures) && data.pictures.length > 0 ? data.pictures[0] : null;
 
+    // Some listings expose price in alternate fields instead of data.price.
+    const priceFromItem =
+      normalizePriceCandidate(data.price) ||
+      normalizePriceCandidate(data.base_price) ||
+      normalizePriceCandidate(data.original_price) ||
+      normalizePriceCandidate(data.sale_price);
+
+    let priceText = priceFromItem;
+
+    if (!priceText) {
+      const pricesResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/prices`, {
+        method: "GET",
+        headers: { accept: "application/json" },
+      });
+
+      if (pricesResponse.ok) {
+        const pricesData = await pricesResponse.json();
+        const prices = Array.isArray(pricesData.prices) ? pricesData.prices : [];
+
+        const direct = prices.find((entry) => normalizePriceCandidate(entry.amount));
+        const fromPromotion = prices.find(
+          (entry) =>
+            entry &&
+            entry.conditions &&
+            typeof entry.conditions === "object" &&
+            normalizePriceCandidate(entry.amount)
+        );
+
+        const chosen = direct || fromPromotion;
+        if (chosen) {
+          priceText = normalizePriceCandidate(chosen.amount);
+        }
+      }
+    }
+
     return {
       productName: cleanText(data.title),
-      priceText: normalizePriceCandidate(data.price),
+      priceText,
       imageUrl: cleanText((firstPicture && (firstPicture.secure_url || firstPicture.url)) || data.thumbnail_secure_url || data.thumbnail),
     };
   } catch (error) {
