@@ -57,15 +57,15 @@ function formatPrice(value) {
   return `R$ ${txt}`;
 }
 
-function normalizePriceCandidate(value) {
+function parsePriceNumber(value) {
   const raw = cleanText(value);
   if (!raw) {
-    return "";
+    return null;
   }
 
   const onlyDigits = raw.replace(/[^\d.,]/g, "");
   if (!onlyDigits) {
-    return "";
+    return null;
   }
 
   let normalized = onlyDigits;
@@ -73,36 +73,73 @@ function normalizePriceCandidate(value) {
   const hasDot = normalized.includes(".");
 
   if (hasComma && hasDot) {
-    // BR format with thousands dot and decimal comma: 2.399,90
     normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
   } else if (hasComma) {
-    // If comma is followed by 1-2 digits, treat as decimal separator.
     if (/,[0-9]{1,2}$/.test(normalized)) {
       normalized = normalized.replace(/,/g, ".");
     } else {
-      // Otherwise comma is likely thousands separator.
       normalized = normalized.replace(/,/g, "");
     }
   } else if (hasDot) {
-    // If dot is followed by 1-2 digits, treat as decimal separator.
     if (/\.[0-9]{1,2}$/.test(normalized)) {
-      // keep as-is
+      // keep as decimal separator
     } else {
-      // Otherwise dot is likely thousands separator (e.g., 2.399)
       normalized = normalized.replace(/\./g, "");
     }
   }
 
   const numeric = Number.parseFloat(normalized);
   if (Number.isNaN(numeric) || numeric <= 0) {
-    return "";
+    return null;
   }
 
+  return numeric;
+}
+
+function formatPriceFromNumber(value) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
     maximumFractionDigits: 2,
-  }).format(numeric);
+  }).format(value);
+}
+
+function normalizePriceCandidate(value) {
+  const numeric = parsePriceNumber(value);
+  if (numeric === null) {
+    return "";
+  }
+
+  return formatPriceFromNumber(numeric);
+}
+
+function extractBestPriceFromHtml(html) {
+  const candidates = [];
+
+  const brlRegex = /R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+,[0-9]{2})/gi;
+  for (const match of html.matchAll(brlRegex)) {
+    const numeric = parsePriceNumber(match[1]);
+    if (numeric !== null) {
+      candidates.push(numeric);
+    }
+  }
+
+  const jsonPriceRegex = /"(?:price|amount|sale_price|current_price|price_amount)"\s*:\s*"?([0-9]+(?:[.,][0-9]{1,2})?)"?/gi;
+  for (const match of html.matchAll(jsonPriceRegex)) {
+    const numeric = parsePriceNumber(match[1]);
+    if (numeric !== null) {
+      candidates.push(numeric);
+    }
+  }
+
+  const filtered = candidates.filter((value) => value >= 10 && value <= 100000);
+  if (filtered.length === 0) {
+    return "";
+  }
+
+  // Choosing the highest reasonable value avoids installment values like 10x 39,90.
+  const best = Math.max(...filtered);
+  return formatPriceFromNumber(best);
 }
 
 function extractJsonLdOfferPrice(html) {
@@ -283,9 +320,11 @@ async function fetchEnrichment(link) {
 
     const metaPrice =
       extractMetaContent(html, "product:price:amount") ||
-      extractMetaContent(html, "og:price:amount");
+      extractMetaContent(html, "og:price:amount") ||
+      extractMetaContent(html, "twitter:data1");
 
     const jsonLdOfferPrice = extractJsonLdOfferPrice(html);
+    const htmlBestPrice = extractBestPriceFromHtml(html);
 
     const metaTitle =
       extractMetaContent(html, "og:title") ||
@@ -303,7 +342,8 @@ async function fetchEnrichment(link) {
       normalizePriceCandidate(fromDbPrice) ||
       itemData?.priceText ||
       normalizePriceCandidate(metaPrice) ||
-      jsonLdOfferPrice;
+      jsonLdOfferPrice ||
+      htmlBestPrice;
 
     const finalProductName =
       itemData?.productName ||
