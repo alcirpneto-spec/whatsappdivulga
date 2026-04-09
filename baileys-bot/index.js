@@ -142,6 +142,22 @@ function extractBestPriceFromHtml(html) {
   return formatPriceFromNumber(best);
 }
 
+function extractAndesAriaPrice(html) {
+  const regex = /aria-label="(?:Agora:\s*)?([0-9.]+)\s+reais(?:\s+com\s+([0-9]{1,2})\s+centavos)?"/gi;
+
+  for (const match of html.matchAll(regex)) {
+    const reais = cleanText(match[1]).replace(/\./g, "");
+    const cents = match[2] ? match[2].padStart(2, "0") : "00";
+    const candidate = `${reais},${cents}`;
+    const formatted = normalizePriceCandidate(candidate);
+    if (formatted) {
+      return formatted;
+    }
+  }
+
+  return "";
+}
+
 function extractJsonLdOfferPrice(html) {
   const scripts = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi) || [];
 
@@ -409,6 +425,7 @@ async function fetchEnrichment(link) {
     const metaDescriptionPrice = normalizePriceCandidate(metaDescription);
 
     const jsonLdOfferPrice = extractJsonLdOfferPrice(html);
+    const andesAriaPrice = extractAndesAriaPrice(html);
     const htmlBestPrice = extractBestPriceFromHtml(html);
 
     const metaTitle =
@@ -446,6 +463,7 @@ async function fetchEnrichment(link) {
       normalizePriceCandidate(metaPrice) ||
       metaDescriptionPrice ||
       jsonLdOfferPrice ||
+      andesAriaPrice ||
       htmlBestPrice;
 
     const finalProductName =
