@@ -208,8 +208,8 @@ Você pode inserir usando qualquer cliente SQL conectado no PostgreSQL (`localho
 ### Como o worker processa
 
 - Busca registros com `processed = FALSE`
-- Monta mensagem no formato "Oferta feita pra voce!"
-- Tenta incluir preco e imagem do produto
+- Monta mensagem no formato "Oferta feita pra você!"
+- Tenta incluir preço e imagem do produto
 - Envia mensagem no grupo
 - Marca como enviado (`processed = TRUE`, `sent_at = NOW()`)
 - Em caso de erro, incrementa `attempts` e salva `last_error`

@@ -713,11 +713,11 @@ async function resolveGroupJid(sock) {
 
 function buildMessage(link, enrichment) {
   const sourceLabel = `Fonte: ${prettySource(link.source)}`;
-  const priceLabel = enrichment.priceText ? `Preco: ${enrichment.priceText}` : "";
+  const priceLabel = enrichment.priceText ? `Preço: ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
 
   return [
-    "Oferta feita pra voce!",
+    "Oferta feita pra você!",
     "",
     `Produto: ${productName}`,
     priceLabel,
