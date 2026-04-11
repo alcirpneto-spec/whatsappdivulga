@@ -2,6 +2,8 @@ import requests
 import json
 import logging
 import hashlib
+import os
+import random
 import time
 from config import SHOPEE_APP_ID, SHOPEE_APP_SECRET, SHOPEE_AFFILIATE_ID
 
@@ -13,6 +15,8 @@ class ShopeeAffiliateAPI:
         self.affiliate_id = SHOPEE_AFFILIATE_ID
         self.base_url = "https://open-api.affiliate.shopee.com.br/graphql"
         self.session = requests.Session()
+        self.max_retries = max(1, int(os.getenv("SHOPEE_API_MAX_RETRIES", "3")))
+        self.retry_base_seconds = max(1.0, float(os.getenv("SHOPEE_API_RETRY_BASE_SECONDS", "2")))
 
     def _build_authorization(self, payload_text):
         """Monta header Authorization no formato Shopee Open API.
@@ -42,19 +46,39 @@ class ShopeeAffiliateAPI:
             "Authorization": self._build_authorization(payload_text),
         }
 
-        response = self.session.post(
-            self.base_url,
-            data=payload_text.encode("utf-8"),
-            headers=headers,
-            timeout=25,
-        )
-        response.raise_for_status()
+        last_error = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = self.session.post(
+                    self.base_url,
+                    data=payload_text.encode("utf-8"),
+                    headers=headers,
+                    timeout=25,
+                )
+                response.raise_for_status()
 
-        try:
-            return response.json()
-        except ValueError:
-            logging.error("Resposta invalida da Shopee Open API: %s", response.text[:500])
-            return {"errors": [{"message": "Resposta JSON invalida da Shopee API"}]}
+                try:
+                    return response.json()
+                except ValueError:
+                    logging.error("Resposta invalida da Shopee Open API: %s", response.text[:500])
+                    return {"errors": [{"message": "Resposta JSON invalida da Shopee API"}]}
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= self.max_retries:
+                    break
+
+                wait_seconds = (self.retry_base_seconds * (2 ** (attempt - 1))) + random.uniform(0, 0.5)
+                logging.warning(
+                    "Falha na Shopee Open API (tentativa %s/%s): %s. Retry em %.1fs",
+                    attempt,
+                    self.max_retries,
+                    exc,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+
+        logging.error("Falha apos %s tentativas na Shopee Open API: %s", self.max_retries, last_error)
+        return {"errors": [{"message": f"Erro de rede Shopee API: {last_error}"}]}
 
     def _extract_category(self, item):
         category_ids = item.get("productCatIds")
@@ -83,7 +107,7 @@ class ShopeeAffiliateAPI:
         )
         return category_id, category_name, normalized_ids
 
-    def search_products(self, keyword="", limit=10, category_id=None, list_type=None):
+    def search_products(self, keyword="", limit=10, category_id=None, list_type=None, page=1):
         """Busca produtos por palavra-chave, categoria e tipo de lista."""
         query_by_category = """
         query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int) {
@@ -162,8 +186,23 @@ class ShopeeAffiliateAPI:
         """
 
         try:
-            variables = {"keyword": keyword or "", "limit": int(limit), "page": 1}
+            safe_page = max(1, int(page))
+            safe_limit = max(1, int(limit))
+            variables = {"keyword": keyword or "", "limit": safe_limit, "page": safe_page}
             use_list_type = list_type is not None and int(list_type) > 0
+
+            # Regra operacional confirmada para TOP_PERFORMING: listType=2 deve ser usado sozinho
+            # (sem keyword/productCatId); filtros ficam para o pós-processamento local.
+            if use_list_type and int(list_type) == 2:
+                if (keyword or "").strip() or category_id is not None:
+                    logging.warning(
+                        "listType=2 (TOP_PERFORMING) nao deve combinar com keyword/categoria. "
+                        "Aplicando busca global com listType e paginacao."
+                    )
+                keyword = ""
+                category_id = None
+                variables = {"keyword": "", "limit": safe_limit, "page": safe_page, "listType": 2}
+
             if use_list_type:
                 variables["listType"] = int(list_type)
             data = None
@@ -178,7 +217,7 @@ class ShopeeAffiliateAPI:
                     error_text = str(data.get("errors", "")).lower()
                     if "must contain matchid" in error_text and use_list_type:
                         logging.warning("listType exige matchId neste contexto. Fazendo fallback sem listType.")
-                        fallback_vars = {"keyword": keyword or "", "limit": int(limit), "page": 1, "productCatId": int(category_id)}
+                        fallback_vars = {"keyword": keyword or "", "limit": safe_limit, "page": safe_page, "productCatId": int(category_id)}
                         data = self._execute_graphql(query_by_category, fallback_vars)
                     elif "unknown argument" in error_text or "cannot query field" in error_text:
                         logging.warning(
@@ -195,7 +234,7 @@ class ShopeeAffiliateAPI:
                     error_text = str(data.get("errors", "")).lower()
                     if "must contain matchid" in error_text:
                         logging.warning("listType exige matchId neste contexto. Fazendo fallback sem listType.")
-                        fallback_vars = {"keyword": keyword or "", "limit": int(limit), "page": 1}
+                        fallback_vars = {"keyword": keyword or "", "limit": safe_limit, "page": safe_page}
                         data = self._execute_graphql(query_by_keyword, fallback_vars)
 
             if data.get("errors"):

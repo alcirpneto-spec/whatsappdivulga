@@ -272,8 +272,14 @@ Para filtrar itens "nada a ver" na descoberta da Shopee, use também:
 SHOPEE_FILTER_MIN_SALES=5
 SHOPEE_FILTER_MIN_PRICE=20
 SHOPEE_FILTER_MAX_PRICE=500
+SHOPEE_FILTER_MIN_COMMISSION_RATE=0
 SHOPEE_DEDUP_HOURS=168
 SHOPEE_LIST_TYPE=0
+SHOPEE_TOP_MAX_PAGES=2
+SHOPEE_MAX_PRODUCTS_PER_CYCLE=30
+SHOPEE_API_CALL_DELAY_SECONDS=0.5
+SHOPEE_API_MAX_RETRIES=3
+SHOPEE_API_RETRY_BASE_SECONDS=2
 SHOPEE_FILTER_ALLOWED_CATEGORY_IDS=11059934,11059967
 ```
 
@@ -281,15 +287,21 @@ Esses filtros removem itens por:
 - categoria nao permitida (quando `SHOPEE_FILTER_ALLOWED_CATEGORY_IDS` estiver preenchido)
 - vendas abaixo do mínimo
 - preço fora da faixa desejada (use `SHOPEE_FILTER_MIN_PRICE=0` e `SHOPEE_FILTER_MAX_PRICE=0` para desativar os filtros de preço)
+- comissão abaixo do mínimo (`SHOPEE_FILTER_MIN_COMMISSION_RATE`, em percentual)
+
+Controle de escala/rate limit:
+- `SHOPEE_TOP_MAX_PAGES`: paginas buscadas por ciclo no modo TOP_PERFORMING
+- `SHOPEE_MAX_PRODUCTS_PER_CYCLE`: teto de produtos processados por ciclo
+- `SHOPEE_API_CALL_DELAY_SECONDS`: delay entre chamadas da API
+- `SHOPEE_API_MAX_RETRIES` e `SHOPEE_API_RETRY_BASE_SECONDS`: retries com backoff exponencial
 
 Controle anti-repeticao:
 - `SHOPEE_DEDUP_HOURS`: janela de deduplicacao (padrao 168h). Use `0` para nunca repetir item ja visto.
 - o worker evita repetir no mesmo ciclo por `item_id` e URL canônica
 - no banco, evita reinserir quando ja existe item Shopee com mesmo `item_id` (ou mesma URL base) dentro da janela
 
-Observacao: o worker tenta buscar por categoria usando `productCatId` no `productOfferV2` e usa `productCatIds` do retorno para validar filtros. Se o schema da conta nao aceitar esses campos, ele faz fallback automatico para busca por keyword.
-Para tentar trazer itens da aba "Melhor performance", configure `SHOPEE_LIST_TYPE` com o valor correspondente da sua conta (ex.: 1, 2, etc). Use `0` para desativar.
-Se quiser busca global por performance (sem depender de palavras), deixe `SHOPEE_DISCOVERY_KEYWORDS` vazio e use `SHOPEE_LIST_TYPE > 0`.
+Observacao: no modo TOP_PERFORMING (`SHOPEE_LIST_TYPE=2`), o worker faz busca global apenas com `listType` + paginacao e aplica os filtros localmente (sem combinar keyword/categoria no request).
+Fora do TOP_PERFORMING, o worker tenta buscar por categoria usando `productCatId` no `productOfferV2` e usa `productCatIds` do retorno para validar filtros. Se o schema da conta nao aceitar esses campos, ele faz fallback automatico para busca por keyword.
 
 ### Configuração do grupo
 
