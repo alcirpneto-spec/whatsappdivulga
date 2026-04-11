@@ -83,11 +83,11 @@ class ShopeeAffiliateAPI:
         )
         return category_id, category_name, normalized_ids
 
-    def search_products(self, keyword="", limit=10, category_id=None):
-        """Busca produtos por palavra-chave e/ou categoria."""
+    def search_products(self, keyword="", limit=10, category_id=None, list_type=None):
+        """Busca produtos por palavra-chave, categoria e tipo de lista."""
         query_by_category = """
-        query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int) {
-            productOfferV2(keyword: $keyword, limit: $limit, page: $page, productCatId: $productCatId) {
+        query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int, $listType: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page, productCatId: $productCatId, listType: $listType) {
                 nodes {
                     itemId
                     productName
@@ -105,8 +105,8 @@ class ShopeeAffiliateAPI:
         """
 
         query_by_keyword = """
-        query ($keyword: String, $limit: Int, $page: Int) {
-            productOfferV2(keyword: $keyword, limit: $limit, page: $page) {
+        query ($keyword: String, $limit: Int, $page: Int, $listType: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page, listType: $listType) {
                 nodes {
                     itemId
                     productName
@@ -125,6 +125,8 @@ class ShopeeAffiliateAPI:
 
         try:
             variables = {"keyword": keyword or "", "limit": int(limit), "page": 1}
+            if list_type is not None:
+                variables["listType"] = int(list_type)
             data = None
 
             if category_id is not None:

@@ -76,6 +76,7 @@ class ShopeeDiscoveryWorker:
         self.interval_minutes = get_env_int("SCHEDULE_INTERVAL_MINUTES", 30)
         self.use_shopee_api = get_env_bool("USE_SHOPEE_API", True)
         self.limit = get_env_int("SHOPEE_DISCOVERY_LIMIT", 10)
+        self.list_type = get_env_int("SHOPEE_LIST_TYPE", 0)
         keywords_raw = os.getenv("SHOPEE_DISCOVERY_KEYWORDS", "carregador,ferramenta,eletronico,casa,beleza")
         self.keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
         self.min_sales = get_env_int("SHOPEE_FILTER_MIN_SALES", 5)
@@ -176,6 +177,7 @@ class ShopeeDiscoveryWorker:
                             keyword=keyword,
                             limit=per_keyword_limit,
                             category_id=category_id,
+                            list_type=self.list_type if self.list_type > 0 else None,
                         )
 
                         if category_id is None:

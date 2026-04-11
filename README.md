@@ -228,6 +228,7 @@ SHOPEE_FILTER_MIN_SALES=5
 SHOPEE_FILTER_MIN_PRICE=20
 SHOPEE_FILTER_MAX_PRICE=500
 SHOPEE_DEDUP_HOURS=168
+SHOPEE_LIST_TYPE=0
 SHOPEE_FILTER_ALLOWED_CATEGORY_IDS=11059934,11059967
 ```
 
@@ -242,6 +243,7 @@ Controle anti-repeticao:
 - no banco, evita reinserir quando ja existe item Shopee com mesmo `item_id` (ou mesma URL base) dentro da janela
 
 Observacao: o worker tenta buscar por categoria usando `productCatId` no `productOfferV2` e usa `productCatIds` do retorno para validar filtros. Se o schema da conta nao aceitar esses campos, ele faz fallback automatico para busca por keyword.
+Para tentar trazer itens da aba "Melhor performance", configure `SHOPEE_LIST_TYPE` com o valor correspondente da sua conta (ex.: 1, 2, etc). Use `0` para desativar.
 
 ### Configuração do grupo
 
