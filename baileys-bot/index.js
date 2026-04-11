@@ -111,6 +111,29 @@ function formatDiscountPercent(value) {
   return `${numeric.toFixed(0)}%`;
 }
 
+function parseSalesCount(value) {
+  const raw = cleanText(value).toLowerCase();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.includes("mil")) {
+    const base = raw.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+    const numeric = Number.parseFloat(base);
+    if (!Number.isNaN(numeric)) {
+      return Math.round(numeric * 1000);
+    }
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) {
+    return null;
+  }
+
+  const numeric = Number.parseInt(digits, 10);
+  return Number.isNaN(numeric) ? null : numeric;
+}
+
 function resolveOfferPricing(link, enrichment, metadata) {
   const currentPriceNumber =
     parsePriceNumber(enrichment.priceText) || parsePriceNumber(link.price_text);
@@ -945,7 +968,8 @@ function buildMessage(link, enrichment) {
   const pricing = resolveOfferPricing(link, enrichment, metadata);
   const originalPriceLabel = pricing.originalPriceText ? `De: ${pricing.originalPriceText}` : "";
   const discountLabel = pricing.discountText ? `Desconto: ${pricing.discountText}` : "";
-  const salesLabel = salesValue ? `Vendas: ${salesValue}` : "";
+  const salesCount = parseSalesCount(salesValue);
+  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `Vendas: ${salesValue}` : "";
   const shopLabel = shopValue ? `Loja: ${shopValue}` : "";
 
   return [

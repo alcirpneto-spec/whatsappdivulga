@@ -241,7 +241,7 @@ Controle anti-repeticao:
 - o worker evita repetir no mesmo ciclo por `item_id` e URL canônica
 - no banco, evita reinserir quando ja existe item Shopee com mesmo `item_id` (ou mesma URL base) dentro da janela
 
-Observacao: o worker tenta buscar por categoria usando `productCatId` no `productOfferV2`. Se o schema da conta nao aceitar esse argumento, ele faz fallback automatico para busca por keyword.
+Observacao: o worker tenta buscar por categoria usando `productCatId` no `productOfferV2` e usa `productCatIds` do retorno para validar filtros. Se o schema da conta nao aceitar esses campos, ele faz fallback automatico para busca por keyword.
 
 ### Configuração do grupo
 

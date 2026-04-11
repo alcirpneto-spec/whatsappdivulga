@@ -93,14 +93,25 @@ class ShopeeDiscoveryWorker:
         sales = product.get("sold", 0)
         price = product.get("price", 0)
         category_id = product.get("category_id")
+        category_ids = product.get("category_ids") or []
 
         if self.allowed_category_ids:
+            normalized_category_ids = set()
+            for value in category_ids:
+                try:
+                    normalized_category_ids.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+
             try:
-                category_num = int(category_id)
+                normalized_category_ids.add(int(category_id))
             except (TypeError, ValueError):
+                pass
+
+            if not normalized_category_ids:
                 return True, "missing_category"
 
-            if category_num not in self.allowed_category_ids:
+            if not normalized_category_ids.intersection(self.allowed_category_ids):
                 return True, "category_not_allowed"
 
         try:
@@ -220,6 +231,7 @@ class ShopeeDiscoveryWorker:
                                 "sales": product.get("sold", 0),
                                 "commission_rate": str(product.get("commission_rate") or ""),
                                 "category_id": product.get("category_id"),
+                                "category_ids": product.get("category_ids") or [],
                                 "category_name": (product.get("category_name") or "").strip(),
                                 "canonical_url": canonical_url,
                             }

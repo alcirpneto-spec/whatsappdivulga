@@ -57,11 +57,22 @@ class ShopeeAffiliateAPI:
             return {"errors": [{"message": "Resposta JSON invalida da Shopee API"}]}
 
     def _extract_category(self, item):
+        category_ids = item.get("productCatIds")
+        normalized_ids = []
+
+        if isinstance(category_ids, list):
+            for value in category_ids:
+                try:
+                    normalized_ids.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+
         category_id = (
             item.get("catid")
             or item.get("catId")
             or item.get("categoryId")
             or item.get("productCatId")
+            or (normalized_ids[0] if normalized_ids else None)
         )
         category_name = (
             item.get("catName")
@@ -70,7 +81,7 @@ class ShopeeAffiliateAPI:
             or item.get("productCatName")
             or item.get("category")
         )
-        return category_id, category_name
+        return category_id, category_name, normalized_ids
 
     def search_products(self, keyword="", limit=10, category_id=None):
         """Busca produtos por palavra-chave e/ou categoria."""
@@ -87,8 +98,7 @@ class ShopeeAffiliateAPI:
                     productLink
                     offerLink
                     commissionRate
-                    productCatId
-                    productCatName
+                    productCatIds
                 }
             }
         }
@@ -107,6 +117,7 @@ class ShopeeAffiliateAPI:
                     productLink
                     offerLink
                     commissionRate
+                    productCatIds
                 }
             }
         }
@@ -139,9 +150,14 @@ class ShopeeAffiliateAPI:
             products = []
             for item in data.get("data", {}).get("productOfferV2", {}).get("nodes", []):
                 price_number = self._parse_decimal(item.get("price"))
-                resolved_category_id, resolved_category_name = self._extract_category(item)
+                resolved_category_id, resolved_category_name, resolved_category_ids = self._extract_category(item)
                 if not resolved_category_id and category_id is not None:
                     resolved_category_id = int(category_id)
+                if not resolved_category_ids and resolved_category_id is not None:
+                    try:
+                        resolved_category_ids = [int(resolved_category_id)]
+                    except (TypeError, ValueError):
+                        resolved_category_ids = []
                 products.append({
                     "id": item.get("itemId"),
                     "shopid": 0,
@@ -155,6 +171,7 @@ class ShopeeAffiliateAPI:
                     "commission_rate": item.get("commissionRate", ""),
                     "category_id": resolved_category_id,
                     "category_name": resolved_category_name,
+                    "category_ids": resolved_category_ids,
                 })
 
             return products
