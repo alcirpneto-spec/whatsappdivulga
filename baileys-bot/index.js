@@ -910,6 +910,19 @@ async function resolveGroupJid(sock) {
   return group.id;
 }
 
+function isRateOverlimitError(error) {
+  const message = cleanText(error?.message).toLowerCase();
+  const innerMessage = cleanText(error?.data).toLowerCase();
+  const statusCode = error?.output?.statusCode;
+
+  return (
+    message.includes("rate-overlimit") ||
+    message.includes("429") ||
+    innerMessage.includes("429") ||
+    statusCode === 429
+  );
+}
+
 function buildMessage(link, enrichment) {
   const sourceLabel = `Fonte: ${prettySource(inferSource(link.source, link.affiliate_url))}`;
   const priceLabel = enrichment.priceText ? `Preço: ${enrichment.priceText}` : "";
@@ -1009,6 +1022,7 @@ async function run() {
 
   while (true) {
     const connection = await startBaileysConnection();
+    let cachedGroupJid = "";
 
     while (connection.shouldReconnect()) {
       if (!connection.isReady()) {
@@ -1016,13 +1030,22 @@ async function run() {
         continue;
       }
 
-      let groupJid;
-      try {
-        groupJid = await resolveGroupJid(connection.sock);
-      } catch (error) {
-        logger.error({ err: error }, "Falha ao resolver grupo. Vou tentar novamente.");
-        await delay(POLL_INTERVAL_SECONDS * 1000);
-        continue;
+      if (!cachedGroupJid) {
+        try {
+          cachedGroupJid = await resolveGroupJid(connection.sock);
+          logger.info({ groupJid: cachedGroupJid }, "Grupo resolvido com sucesso.");
+        } catch (error) {
+          const waitSeconds = isRateOverlimitError(error)
+            ? Math.max(POLL_INTERVAL_SECONDS, 120)
+            : POLL_INTERVAL_SECONDS;
+
+          logger.error(
+            { err: error, waitSeconds },
+            "Falha ao resolver grupo. Vou tentar novamente depois do intervalo."
+          );
+          await delay(waitSeconds * 1000);
+          continue;
+        }
       }
 
       const pendingLinks = await getPendingLinks(MAX_LINKS_PER_CYCLE);
@@ -1043,16 +1066,16 @@ async function run() {
 
           if (enrichment.imageUrl) {
             try {
-              await connection.sock.sendMessage(groupJid, {
+              await connection.sock.sendMessage(cachedGroupJid, {
                 image: { url: enrichment.imageUrl },
                 caption: message,
               });
             } catch (imageError) {
               logger.warn({ err: imageError, linkId: link.id }, "Falha ao enviar imagem. Vou enviar texto.");
-              await connection.sock.sendMessage(groupJid, { text: message });
+              await connection.sock.sendMessage(cachedGroupJid, { text: message });
             }
           } else {
-            await connection.sock.sendMessage(groupJid, { text: message });
+            await connection.sock.sendMessage(cachedGroupJid, { text: message });
           }
 
           await markAsSent(link.id);
