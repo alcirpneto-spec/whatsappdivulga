@@ -276,6 +276,7 @@ SHOPEE_FILTER_MIN_COMMISSION_RATE=0
 SHOPEE_DEDUP_HOURS=168
 SHOPEE_LIST_TYPE=0
 SHOPEE_TOP_MAX_PAGES=2
+SHOPEE_TOP_OVERFLOW_PAGES=8
 SHOPEE_MAX_PRODUCTS_PER_CYCLE=30
 SHOPEE_API_CALL_DELAY_SECONDS=0.5
 SHOPEE_API_MAX_RETRIES=3
@@ -290,7 +291,8 @@ Esses filtros removem itens por:
 - comissão abaixo do mínimo (`SHOPEE_FILTER_MIN_COMMISSION_RATE`, em percentual)
 
 Controle de escala/rate limit:
-- `SHOPEE_TOP_MAX_PAGES`: paginas buscadas por ciclo no modo TOP_PERFORMING
+- `SHOPEE_TOP_MAX_PAGES`: paginas base buscadas por ciclo no modo TOP_PERFORMING
+- `SHOPEE_TOP_OVERFLOW_PAGES`: paginas extras para tentar completar novos itens quando vier muita repeticao
 - `SHOPEE_MAX_PRODUCTS_PER_CYCLE`: teto de produtos processados por ciclo
 - `SHOPEE_API_CALL_DELAY_SECONDS`: delay entre chamadas da API
 - `SHOPEE_API_MAX_RETRIES` e `SHOPEE_API_RETRY_BASE_SECONDS`: retries com backoff exponencial

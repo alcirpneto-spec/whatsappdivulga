@@ -109,6 +109,7 @@ class ShopeeDiscoveryWorker:
         self.min_commission_rate = get_env_float("SHOPEE_FILTER_MIN_COMMISSION_RATE", 0.0)
         self.dedup_hours = max(0, get_env_int("SHOPEE_DEDUP_HOURS", 168))
         self.top_max_pages = max(1, get_env_int("SHOPEE_TOP_MAX_PAGES", 2))
+        self.top_overflow_pages = max(0, get_env_int("SHOPEE_TOP_OVERFLOW_PAGES", 8))
         self.max_products_per_cycle = max(1, get_env_int("SHOPEE_MAX_PRODUCTS_PER_CYCLE", 30))
         self.api_call_delay_seconds = max(0.0, get_env_float("SHOPEE_API_CALL_DELAY_SECONDS", 0.5))
         self.allowed_category_ids = set(get_env_int_list("SHOPEE_FILTER_ALLOWED_CATEGORY_IDS"))
@@ -231,7 +232,12 @@ class ShopeeDiscoveryWorker:
 
         try:
             with conn.cursor() as cur:
-                search_batches = self._build_search_batches(search_terms)
+                if self.is_top_performing_mode:
+                    max_pages_to_scan = self.top_max_pages + self.top_overflow_pages
+                    search_batches = [("", None, page) for page in range(1, max_pages_to_scan + 1)]
+                else:
+                    search_batches = self._build_search_batches(search_terms)
+
                 per_batch_limit = max(1, min(self.limit, self.max_products_per_cycle))
                 processed_in_cycle = 0
 
@@ -257,8 +263,9 @@ class ShopeeDiscoveryWorker:
                     label = keyword if keyword else "(global)"
                     if self.is_top_performing_mode:
                         logging.info(
-                            "Shopee TOP_PERFORMING page=%s: %s produtos retornados",
+                            "Shopee TOP_PERFORMING page=%s/%s: %s produtos retornados",
                             page,
+                            self.top_max_pages + self.top_overflow_pages,
                             len(products),
                         )
                     elif category_id is None:
