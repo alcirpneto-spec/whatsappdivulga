@@ -56,9 +56,44 @@ class ShopeeAffiliateAPI:
             logging.error("Resposta invalida da Shopee Open API: %s", response.text[:500])
             return {"errors": [{"message": "Resposta JSON invalida da Shopee API"}]}
 
-    def search_products(self, keyword, limit=10):
-        """Busca produtos por palavra-chave."""
-        query = """
+    def _extract_category(self, item):
+        category_id = (
+            item.get("catid")
+            or item.get("catId")
+            or item.get("categoryId")
+            or item.get("productCatId")
+        )
+        category_name = (
+            item.get("catName")
+            or item.get("categoryName")
+            or item.get("productCategoryName")
+            or item.get("category")
+        )
+        return category_id, category_name
+
+    def search_products(self, keyword="", limit=10, category_id=None):
+        """Busca produtos por palavra-chave e/ou categoria."""
+        query_by_category = """
+        query ($keyword: String, $limit: Int, $page: Int, $catid: Int64) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page, catid: $catid) {
+                nodes {
+                    itemId
+                    productName
+                    price
+                    imageUrl
+                    sales
+                    shopName
+                    productLink
+                    offerLink
+                    commissionRate
+                    catid
+                    catName
+                }
+            }
+        }
+        """
+
+        query_by_keyword = """
         query ($keyword: String, $limit: Int, $page: Int) {
             productOfferV2(keyword: $keyword, limit: $limit, page: $page) {
                 nodes {
@@ -77,7 +112,24 @@ class ShopeeAffiliateAPI:
         """
 
         try:
-            data = self._execute_graphql(query, {"keyword": keyword, "limit": int(limit), "page": 1})
+            variables = {"keyword": keyword or "", "limit": int(limit), "page": 1}
+            data = None
+
+            if category_id is not None:
+                variables_with_category = dict(variables)
+                variables_with_category["catid"] = int(category_id)
+                data = self._execute_graphql(query_by_category, variables_with_category)
+
+                if data.get("errors"):
+                    error_text = str(data.get("errors", "")).lower()
+                    if "unknown argument" in error_text or "cannot query field" in error_text:
+                        logging.warning(
+                            "Schema sem suporte de categoria na query atual. Fazendo fallback para keyword."
+                        )
+                        data = self._execute_graphql(query_by_keyword, variables)
+
+            if data is None:
+                data = self._execute_graphql(query_by_keyword, variables)
 
             if data.get("errors"):
                 logging.error("Erro GraphQL na busca de produtos Shopee: %s", data["errors"])
@@ -86,6 +138,7 @@ class ShopeeAffiliateAPI:
             products = []
             for item in data.get("data", {}).get("productOfferV2", {}).get("nodes", []):
                 price_number = self._parse_decimal(item.get("price"))
+                resolved_category_id, resolved_category_name = self._extract_category(item)
                 products.append({
                     "id": item.get("itemId"),
                     "shopid": 0,
@@ -97,6 +150,8 @@ class ShopeeAffiliateAPI:
                     "shop_name": item.get("shopName", ""),
                     "url": item.get("offerLink") or item.get("productLink") or "",
                     "commission_rate": item.get("commissionRate", ""),
+                    "category_id": resolved_category_id,
+                    "category_name": resolved_category_name,
                 })
 
             return products

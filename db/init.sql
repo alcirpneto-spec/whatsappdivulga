@@ -15,3 +15,11 @@ CREATE TABLE IF NOT EXISTS affiliate_links (
 
 CREATE INDEX IF NOT EXISTS idx_affiliate_links_pending
     ON affiliate_links (processed, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_shopee_itemid_created
+    ON affiliate_links ((metadata_json->>'item_id'), created_at)
+    WHERE source = 'shopee';
+
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_shopee_canonical_url_created
+    ON affiliate_links ((lower(rtrim(split_part(affiliate_url, '?', 1), '/'))), created_at)
+    WHERE source = 'shopee';

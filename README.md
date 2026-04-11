@@ -221,6 +221,28 @@ SHOPEE_APP_SECRET=seu_app_secret
 SHOPEE_AFFILIATE_ID=seu_affiliate_id
 ```
 
+Para filtrar itens "nada a ver" na descoberta da Shopee, use também:
+
+```env
+SHOPEE_FILTER_MIN_SALES=5
+SHOPEE_FILTER_MIN_PRICE=20
+SHOPEE_FILTER_MAX_PRICE=500
+SHOPEE_DEDUP_HOURS=168
+SHOPEE_FILTER_ALLOWED_CATEGORY_IDS=11059934,11059967
+```
+
+Esses filtros removem itens por:
+- categoria nao permitida (quando `SHOPEE_FILTER_ALLOWED_CATEGORY_IDS` estiver preenchido)
+- vendas abaixo do mínimo
+- preço fora da faixa desejada
+
+Controle anti-repeticao:
+- `SHOPEE_DEDUP_HOURS`: janela de deduplicacao (padrao 168h)
+- o worker evita repetir no mesmo ciclo por `item_id` e URL canônica
+- no banco, evita reinserir quando ja existe item Shopee com mesmo `item_id` (ou mesma URL base) dentro da janela
+
+Observacao: o worker tenta buscar por categoria usando `catid` no `productOfferV2`. Se o schema da conta nao aceitar esse argumento, ele faz fallback automatico para busca por keyword.
+
 ### Configuração do grupo
 
 No `docker-compose.yml`, configure uma das opções abaixo no serviço `baileys-worker`:

@@ -16,6 +16,40 @@ def get_env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def get_env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
+def get_env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value.strip().replace(",", "."))
+    except ValueError:
+        return default
+
+
+def get_env_int_list(name: str):
+    value = os.getenv(name, "")
+    items = []
+    for raw in value.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            items.append(int(token))
+        except ValueError:
+            continue
+    return items
+
+
 def format_price_text(value) -> str:
     try:
         numeric = float(value)
@@ -28,19 +62,67 @@ def format_price_text(value) -> str:
     return f"{numeric:.2f}".replace(".", ",")
 
 
+def normalize_url(url: str) -> str:
+    clean = (url or "").strip()
+    if not clean:
+        return ""
+    base = clean.split("?", 1)[0].rstrip("/")
+    return base.lower()
+
+
 class ShopeeDiscoveryWorker:
     def __init__(self):
         self.database_url = os.getenv("DATABASE_URL", "")
-        self.interval_minutes = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "30"))
+        self.interval_minutes = get_env_int("SCHEDULE_INTERVAL_MINUTES", 30)
         self.use_shopee_api = get_env_bool("USE_SHOPEE_API", True)
-        self.limit = int(os.getenv("SHOPEE_DISCOVERY_LIMIT", "10"))
+        self.limit = get_env_int("SHOPEE_DISCOVERY_LIMIT", 10)
         keywords_raw = os.getenv("SHOPEE_DISCOVERY_KEYWORDS", "carregador,ferramenta,eletronico,casa,beleza")
         self.keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+        self.min_sales = get_env_int("SHOPEE_FILTER_MIN_SALES", 5)
+        self.min_price = get_env_float("SHOPEE_FILTER_MIN_PRICE", 20.0)
+        self.max_price = get_env_float("SHOPEE_FILTER_MAX_PRICE", 500.0)
+        self.dedup_hours = max(1, get_env_int("SHOPEE_DEDUP_HOURS", 168))
+        self.allowed_category_ids = set(get_env_int_list("SHOPEE_FILTER_ALLOWED_CATEGORY_IDS"))
 
         if not self.database_url:
             raise ValueError("DATABASE_URL nao definido para o worker de descoberta Shopee.")
 
         self.api = ShopeeAffiliateAPI()
+
+    def _should_skip_product(self, product: dict):
+        sales = product.get("sold", 0)
+        price = product.get("price", 0)
+        category_id = product.get("category_id")
+
+        if self.allowed_category_ids:
+            try:
+                category_num = int(category_id)
+            except (TypeError, ValueError):
+                return True, "missing_category"
+
+            if category_num not in self.allowed_category_ids:
+                return True, "category_not_allowed"
+
+        try:
+            sales_num = int(sales)
+        except (TypeError, ValueError):
+            sales_num = 0
+
+        if sales_num < self.min_sales:
+            return True, "min_sales"
+
+        try:
+            price_num = float(price)
+        except (TypeError, ValueError):
+            price_num = 0.0
+
+        if price_num < self.min_price:
+            return True, "min_price"
+
+        if self.max_price > 0 and price_num > self.max_price:
+            return True, "max_price"
+
+        return False, ""
 
     def run_cycle(self):
         if not self.use_shopee_api:
@@ -53,6 +135,17 @@ class ShopeeDiscoveryWorker:
 
         inserted = 0
         skipped = 0
+        skipped_by_filter = {
+            "missing_category": 0,
+            "category_not_allowed": 0,
+            "min_sales": 0,
+            "min_price": 0,
+            "max_price": 0,
+            "duplicate_in_cycle_item": 0,
+            "duplicate_in_cycle_url": 0,
+        }
+        seen_item_ids = set()
+        seen_urls = set()
 
         conn = psycopg2.connect(self.database_url)
         conn.autocommit = False
@@ -62,53 +155,115 @@ class ShopeeDiscoveryWorker:
                 per_keyword_limit = max(1, self.limit // len(self.keywords))
 
                 for keyword in self.keywords:
-                    products = self.api.search_products(keyword=keyword, limit=per_keyword_limit)
-                    logging.info("Shopee keyword '%s': %s produtos retornados", keyword, len(products))
+                    if self.allowed_category_ids:
+                        category_ids = sorted(self.allowed_category_ids)
+                    else:
+                        category_ids = [None]
 
-                    for product in products:
-                        url = (product.get("url") or "").strip()
-                        if not url:
-                            skipped += 1
-                            continue
-
-                        product_name = (product.get("name") or "Produto Shopee").strip()
-                        price_text = format_price_text(product.get("price"))
-                        image_url = (product.get("image") or "").strip()
-
-                        metadata = {
-                            "shop_name": (product.get("shop_name") or "").strip(),
-                            "sales": product.get("sold", 0),
-                            "commission_rate": str(product.get("commission_rate") or ""),
-                        }
-
-                        cur.execute(
-                            """
-                            INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url, metadata_json)
-                            SELECT %s, %s, 'shopee', NULLIF(%s, ''), NULLIF(%s, ''), %s::jsonb
-                            WHERE NOT EXISTS (
-                                SELECT 1
-                                FROM affiliate_links
-                                WHERE affiliate_url = %s
-                                  AND created_at >= NOW() - INTERVAL '24 hours'
-                            )
-                            """,
-                            (
-                                product_name,
-                                url,
-                                price_text,
-                                image_url,
-                                json.dumps(metadata, ensure_ascii=False),
-                                url,
-                            ),
+                    for category_id in category_ids:
+                        products = self.api.search_products(
+                            keyword=keyword,
+                            limit=per_keyword_limit,
+                            category_id=category_id,
                         )
 
-                        if cur.rowcount > 0:
-                            inserted += 1
+                        if category_id is None:
+                            logging.info("Shopee keyword '%s': %s produtos retornados", keyword, len(products))
                         else:
-                            skipped += 1
+                            logging.info(
+                                "Shopee keyword '%s' categoria %s: %s produtos retornados",
+                                keyword,
+                                category_id,
+                                len(products),
+                            )
+
+                        for product in products:
+                            should_skip, reason = self._should_skip_product(product)
+                            if should_skip:
+                                skipped += 1
+                                if reason in skipped_by_filter:
+                                    skipped_by_filter[reason] += 1
+                                continue
+
+                            item_id_raw = product.get("id")
+                            try:
+                                item_id_text = str(int(item_id_raw)) if item_id_raw is not None else ""
+                            except (TypeError, ValueError):
+                                item_id_text = ""
+
+                            if item_id_text:
+                                if item_id_text in seen_item_ids:
+                                    skipped += 1
+                                    skipped_by_filter["duplicate_in_cycle_item"] += 1
+                                    continue
+                                seen_item_ids.add(item_id_text)
+
+                            url = (product.get("url") or "").strip()
+                            if not url:
+                                skipped += 1
+                                continue
+
+                            canonical_url = normalize_url(url)
+                            if canonical_url in seen_urls:
+                                skipped += 1
+                                skipped_by_filter["duplicate_in_cycle_url"] += 1
+                                continue
+                            seen_urls.add(canonical_url)
+
+                            product_name = (product.get("name") or "Produto Shopee").strip()
+                            price_text = format_price_text(product.get("price"))
+                            image_url = (product.get("image") or "").strip()
+
+                            metadata = {
+                                "item_id": item_id_text,
+                                "shop_name": (product.get("shop_name") or "").strip(),
+                                "sales": product.get("sold", 0),
+                                "commission_rate": str(product.get("commission_rate") or ""),
+                                "category_id": product.get("category_id"),
+                                "category_name": (product.get("category_name") or "").strip(),
+                                "canonical_url": canonical_url,
+                            }
+
+                            cur.execute(
+                                """
+                                INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url, metadata_json)
+                                SELECT %s, %s, 'shopee', NULLIF(%s, ''), NULLIF(%s, ''), %s::jsonb
+                                WHERE NOT EXISTS (
+                                    SELECT 1
+                                    FROM affiliate_links
+                                                                        WHERE source = 'shopee'
+                                                                            AND created_at >= NOW() - (%s || ' hours')::interval
+                                                                            AND (
+                                                                                (%s <> '' AND metadata_json->>'item_id' = %s)
+                                                                                OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
+                                                                            )
+                                )
+                                """,
+                                (
+                                    product_name,
+                                    url,
+                                    price_text,
+                                    image_url,
+                                    json.dumps(metadata, ensure_ascii=False),
+                                                                        self.dedup_hours,
+                                                                        item_id_text,
+                                                                        item_id_text,
+                                                                        canonical_url,
+                                ),
+                            )
+
+                            if cur.rowcount > 0:
+                                inserted += 1
+                            else:
+                                skipped += 1
 
             conn.commit()
-            logging.info("Ciclo Shopee concluido. Inseridos=%s, Ignorados=%s", inserted, skipped)
+            logging.info(
+                "Ciclo Shopee concluido. Inseridos=%s, Ignorados=%s, Filtros=%s",
+                inserted,
+                skipped,
+                skipped_by_filter,
+            )
         except Exception:
             conn.rollback()
             logging.exception("Erro no ciclo de descoberta Shopee")

@@ -7,6 +7,19 @@ from config import LINKS_PATH, SALES_DATA_PATH, NEW_LINKS_PATH
 
 
 class ProductFetcher:
+    def _parse_link_line(self, raw: str):
+        # Preferred format: "url - nome". Fallback supports first whitespace after URL.
+        if " - " in raw:
+            parts = [part.strip() for part in raw.split(" - ", 1)]
+            if len(parts) == 2 and parts[0].startswith("http"):
+                return parts[0], parts[1]
+
+        match = re.match(r"^(https?://\S+)\s+(.+)$", raw)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+
+        return None, None
+
     def load_links(self):
         links = {}
         if not LINKS_PATH.exists():
@@ -18,13 +31,8 @@ class ProductFetcher:
                 if not raw or raw.startswith('#'):
                     continue
 
-                if '-' in raw:
-                    parts = [part.strip() for part in raw.split('-', 1)]
-                    if len(parts) == 2:
-                        url, name = parts
-                    else:
-                        continue
-                else:
+                url, name = self._parse_link_line(raw)
+                if not url or not name:
                     continue
 
                 links[name.lower()] = url
@@ -42,11 +50,9 @@ class ProductFetcher:
                 if not raw or raw.startswith('#'):
                     continue
 
-                if '-' in raw:
-                    parts = [part.strip() for part in raw.split('-', 1)]
-                    if len(parts) == 2:
-                        url, name = parts
-                        new_links.append({'url': url, 'name': name})
+                url, name = self._parse_link_line(raw)
+                if url and name:
+                    new_links.append({'url': url, 'name': name})
         return new_links
 
     def load_sales_history(self):
