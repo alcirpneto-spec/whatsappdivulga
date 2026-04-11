@@ -67,6 +67,7 @@ class ShopeeAffiliateAPI:
             item.get("catName")
             or item.get("categoryName")
             or item.get("productCategoryName")
+            or item.get("productCatName")
             or item.get("category")
         )
         return category_id, category_name
@@ -74,8 +75,8 @@ class ShopeeAffiliateAPI:
     def search_products(self, keyword="", limit=10, category_id=None):
         """Busca produtos por palavra-chave e/ou categoria."""
         query_by_category = """
-        query ($keyword: String, $limit: Int, $page: Int, $catid: Int64) {
-            productOfferV2(keyword: $keyword, limit: $limit, page: $page, catid: $catid) {
+        query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page, productCatId: $productCatId) {
                 nodes {
                     itemId
                     productName
@@ -86,8 +87,8 @@ class ShopeeAffiliateAPI:
                     productLink
                     offerLink
                     commissionRate
-                    catid
-                    catName
+                    productCatId
+                    productCatName
                 }
             }
         }
@@ -117,7 +118,7 @@ class ShopeeAffiliateAPI:
 
             if category_id is not None:
                 variables_with_category = dict(variables)
-                variables_with_category["catid"] = int(category_id)
+                variables_with_category["productCatId"] = int(category_id)
                 data = self._execute_graphql(query_by_category, variables_with_category)
 
                 if data.get("errors"):
@@ -139,6 +140,8 @@ class ShopeeAffiliateAPI:
             for item in data.get("data", {}).get("productOfferV2", {}).get("nodes", []):
                 price_number = self._parse_decimal(item.get("price"))
                 resolved_category_id, resolved_category_name = self._extract_category(item)
+                if not resolved_category_id and category_id is not None:
+                    resolved_category_id = int(category_id)
                 products.append({
                     "id": item.get("itemId"),
                     "shopid": 0,
