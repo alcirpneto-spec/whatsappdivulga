@@ -82,7 +82,7 @@ class ShopeeDiscoveryWorker:
         self.min_sales = get_env_int("SHOPEE_FILTER_MIN_SALES", 5)
         self.min_price = get_env_float("SHOPEE_FILTER_MIN_PRICE", 20.0)
         self.max_price = get_env_float("SHOPEE_FILTER_MAX_PRICE", 500.0)
-        self.dedup_hours = max(1, get_env_int("SHOPEE_DEDUP_HOURS", 168))
+        self.dedup_hours = max(0, get_env_int("SHOPEE_DEDUP_HOURS", 168))
         self.allowed_category_ids = set(get_env_int_list("SHOPEE_FILTER_ALLOWED_CATEGORY_IDS"))
 
         if not self.database_url:
@@ -254,33 +254,60 @@ class ShopeeDiscoveryWorker:
                                 "canonical_url": canonical_url,
                             }
 
-                            cur.execute(
-                                """
-                                INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url, metadata_json)
-                                SELECT %s, %s, 'shopee', NULLIF(%s, ''), NULLIF(%s, ''), %s::jsonb
-                                WHERE NOT EXISTS (
-                                    SELECT 1
-                                    FROM affiliate_links
-                                    WHERE source = 'shopee'
-                                      AND created_at >= NOW() - (%s || ' hours')::interval
-                                      AND (
-                                        (%s <> '' AND metadata_json->>'item_id' = %s)
-                                        OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
-                                      )
+                            if self.dedup_hours > 0:
+                                cur.execute(
+                                    """
+                                    INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url, metadata_json)
+                                    SELECT %s, %s, 'shopee', NULLIF(%s, ''), NULLIF(%s, ''), %s::jsonb
+                                    WHERE NOT EXISTS (
+                                        SELECT 1
+                                        FROM affiliate_links
+                                        WHERE source = 'shopee'
+                                          AND created_at >= NOW() - (%s || ' hours')::interval
+                                          AND (
+                                            (%s <> '' AND metadata_json->>'item_id' = %s)
+                                            OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
+                                          )
+                                    )
+                                    """,
+                                    (
+                                        product_name,
+                                        url,
+                                        price_text,
+                                        image_url,
+                                        json.dumps(metadata, ensure_ascii=False),
+                                        self.dedup_hours,
+                                        item_id_text,
+                                        item_id_text,
+                                        canonical_url,
+                                    ),
                                 )
-                                """,
-                                (
-                                    product_name,
-                                    url,
-                                    price_text,
-                                    image_url,
-                                    json.dumps(metadata, ensure_ascii=False),
-                                    self.dedup_hours,
-                                    item_id_text,
-                                    item_id_text,
-                                    canonical_url,
-                                ),
-                            )
+                            else:
+                                cur.execute(
+                                    """
+                                    INSERT INTO affiliate_links (product_name, affiliate_url, source, price_text, image_url, metadata_json)
+                                    SELECT %s, %s, 'shopee', NULLIF(%s, ''), NULLIF(%s, ''), %s::jsonb
+                                    WHERE NOT EXISTS (
+                                        SELECT 1
+                                        FROM affiliate_links
+                                        WHERE source = 'shopee'
+                                          AND (
+                                            (%s <> '' AND metadata_json->>'item_id' = %s)
+                                            OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
+                                          )
+                                    )
+                                    """,
+                                    (
+                                        product_name,
+                                        url,
+                                        price_text,
+                                        image_url,
+                                        json.dumps(metadata, ensure_ascii=False),
+                                        item_id_text,
+                                        item_id_text,
+                                        canonical_url,
+                                    ),
+                                )
 
                             if cur.rowcount > 0:
                                 inserted += 1

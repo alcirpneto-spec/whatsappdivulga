@@ -235,10 +235,10 @@ SHOPEE_FILTER_ALLOWED_CATEGORY_IDS=11059934,11059967
 Esses filtros removem itens por:
 - categoria nao permitida (quando `SHOPEE_FILTER_ALLOWED_CATEGORY_IDS` estiver preenchido)
 - vendas abaixo do mínimo
-- preço fora da faixa desejada
+- preço fora da faixa desejada (use `SHOPEE_FILTER_MIN_PRICE=0` e `SHOPEE_FILTER_MAX_PRICE=0` para desativar os filtros de preço)
 
 Controle anti-repeticao:
-- `SHOPEE_DEDUP_HOURS`: janela de deduplicacao (padrao 168h)
+- `SHOPEE_DEDUP_HOURS`: janela de deduplicacao (padrao 168h). Use `0` para nunca repetir item ja visto.
 - o worker evita repetir no mesmo ciclo por `item_id` e URL canônica
 - no banco, evita reinserir quando ja existe item Shopee com mesmo `item_id` (ou mesma URL base) dentro da janela
 
