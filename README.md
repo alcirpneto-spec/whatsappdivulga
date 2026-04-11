@@ -189,8 +189,9 @@ Se retornar `Total retornado: 0`, normalmente é um destes pontos:
 
 ## Modo Baileys + Banco de Dados (Mercado Livre, Amazon e Shopee)
 
-Este modo sobe dois containers no Docker:
+Este modo sobe tres containers no Docker:
 - `db` (PostgreSQL): onde você insere os links de afiliado
+- `shopee-discoverer`: descobre produtos da Shopee e grava no banco a cada 30 minutos
 - `baileys-worker`: conecta no WhatsApp com Baileys e envia links novos no grupo
 
 ### Como subir
@@ -201,11 +202,17 @@ Este modo sobe dois containers no Docker:
 docker compose up --build
 ```
 
+Para produção em background:
+
+```bash
+docker compose up -d --build
+```
+
 2. No primeiro start, o `baileys-worker` vai imprimir um QR Code no log.
 3. Escaneie o QR com seu WhatsApp para autenticar a sessão.
 4. A sessão fica persistida na pasta `baileys-auth/`.
 
-Se for usar descoberta automática com API Shopee no serviço Python (profile `legacy-python`), preencha as variáveis no arquivo `.env`:
+Para descoberta automática com API Shopee via scripts Python locais, preencha as variáveis no arquivo `.env`:
 
 ```env
 USE_SHOPEE_API=True
@@ -222,6 +229,9 @@ No `docker-compose.yml`, configure uma das opções abaixo no serviço `baileys-
 
 Cadência de verificação do banco no `baileys-worker`:
 - `POLL_INTERVAL_SECONDS=60` (padrão atual: 1 minuto)
+
+Cadência de descoberta da Shopee no `shopee-discoverer`:
+- `SCHEDULE_INTERVAL_MINUTES=30` (padrão atual: 30 minutos)
 
 ### Inserindo links no banco
 
