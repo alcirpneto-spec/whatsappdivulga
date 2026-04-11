@@ -164,6 +164,9 @@ class ShopeeDiscoveryWorker:
             "max_price": 0,
             "duplicate_in_cycle_item": 0,
             "duplicate_in_cycle_url": 0,
+            "missing_url": 0,
+            "duplicate_in_db": 0,
+            "other_filter": 0,
         }
         seen_item_ids = set()
         seen_urls = set()
@@ -206,6 +209,8 @@ class ShopeeDiscoveryWorker:
                                 skipped += 1
                                 if reason in skipped_by_filter:
                                     skipped_by_filter[reason] += 1
+                                else:
+                                    skipped_by_filter["other_filter"] += 1
                                 continue
 
                             item_id_raw = product.get("id")
@@ -224,6 +229,7 @@ class ShopeeDiscoveryWorker:
                             url = (product.get("url") or "").strip()
                             if not url:
                                 skipped += 1
+                                skipped_by_filter["missing_url"] += 1
                                 continue
 
                             canonical_url = normalize_url(url)
@@ -255,12 +261,12 @@ class ShopeeDiscoveryWorker:
                                 WHERE NOT EXISTS (
                                     SELECT 1
                                     FROM affiliate_links
-                                                                        WHERE source = 'shopee'
-                                                                            AND created_at >= NOW() - (%s || ' hours')::interval
-                                                                            AND (
-                                                                                (%s <> '' AND metadata_json->>'item_id' = %s)
-                                                                                OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
-                                                                            )
+                                    WHERE source = 'shopee'
+                                      AND created_at >= NOW() - (%s || ' hours')::interval
+                                      AND (
+                                        (%s <> '' AND metadata_json->>'item_id' = %s)
+                                        OR lower(rtrim(split_part(affiliate_url, '?', 1), '/')) = %s
+                                      )
                                 )
                                 """,
                                 (
@@ -269,10 +275,10 @@ class ShopeeDiscoveryWorker:
                                     price_text,
                                     image_url,
                                     json.dumps(metadata, ensure_ascii=False),
-                                                                        self.dedup_hours,
-                                                                        item_id_text,
-                                                                        item_id_text,
-                                                                        canonical_url,
+                                    self.dedup_hours,
+                                    item_id_text,
+                                    item_id_text,
+                                    canonical_url,
                                 ),
                             )
 
@@ -280,6 +286,7 @@ class ShopeeDiscoveryWorker:
                                 inserted += 1
                             else:
                                 skipped += 1
+                                skipped_by_filter["duplicate_in_db"] += 1
 
             conn.commit()
             logging.info(
