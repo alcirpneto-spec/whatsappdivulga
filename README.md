@@ -313,6 +313,14 @@ No `docker-compose.yml`, configure uma das opções abaixo no serviço `baileys-
 
 Cadência de verificação do banco no `baileys-worker`:
 - `POLL_INTERVAL_SECONDS=60` (padrão atual: 1 minuto)
+- `SEND_INTERVAL_SECONDS=300` (padrão: envia 1 item a cada 5 minutos)
+- `QUEUE_REFRESH_INTERVAL_SECONDS=3600` (padrão: recarrega lote do banco a cada 60 minutos)
+- `MAX_LINKS_PER_CYCLE=10` (quantidade maxima de itens na fila por janela)
+
+Fluxo de envio cadenciado:
+- no inicio da janela, o worker busca pendentes no banco (`MAX_LINKS_PER_CYCLE`)
+- envia um item por vez, respeitando `SEND_INTERVAL_SECONDS`
+- ao fim da janela (`QUEUE_REFRESH_INTERVAL_SECONDS`), recarrega a fila com novos pendentes
 
 Cadência de descoberta da Shopee no `shopee-discoverer`:
 - `SCHEDULE_INTERVAL_MINUTES=30` (padrão atual: 30 minutos)

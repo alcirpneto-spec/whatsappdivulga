@@ -13,6 +13,10 @@ const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 const DATABASE_URL = process.env.DATABASE_URL;
 const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS || 60);
 const MAX_LINKS_PER_CYCLE = Number(process.env.MAX_LINKS_PER_CYCLE || 10);
+const SEND_INTERVAL_SECONDS = Number(process.env.SEND_INTERVAL_SECONDS || 300);
+const QUEUE_REFRESH_INTERVAL_SECONDS = Number(
+  process.env.QUEUE_REFRESH_INTERVAL_SECONDS || 3600
+);
 const BAILEYS_GROUP_JID = process.env.BAILEYS_GROUP_JID;
 const WHATSAPP_GROUP_NAME = process.env.WHATSAPP_GROUP_NAME;
 
@@ -1055,6 +1059,8 @@ async function run() {
   while (true) {
     const connection = await startBaileysConnection();
     let cachedGroupJid = "";
+    let pendingQueue = [];
+    let nextQueueRefreshAt = 0;
 
     while (connection.shouldReconnect()) {
       if (!connection.isReady()) {
@@ -1080,44 +1086,65 @@ async function run() {
         }
       }
 
-      const pendingLinks = await getPendingLinks(MAX_LINKS_PER_CYCLE);
+      const nowMs = Date.now();
+      if (nextQueueRefreshAt === 0 || nowMs >= nextQueueRefreshAt) {
+        pendingQueue = await getPendingLinks(MAX_LINKS_PER_CYCLE);
+        nextQueueRefreshAt = nowMs + QUEUE_REFRESH_INTERVAL_SECONDS * 1000;
 
-      if (pendingLinks.length === 0) {
-        await delay(POLL_INTERVAL_SECONDS * 1000);
+        logger.info(
+          {
+            pendingCount: pendingQueue.length,
+            refreshInSeconds: QUEUE_REFRESH_INTERVAL_SECONDS,
+            sendIntervalSeconds: SEND_INTERVAL_SECONDS,
+          },
+          "Fila de envio atualizada para a nova janela."
+        );
+      }
+
+      if (pendingQueue.length === 0) {
+        const waitMs = Math.max(1000, Math.min(POLL_INTERVAL_SECONDS * 1000, nextQueueRefreshAt - nowMs));
+        await delay(waitMs);
         continue;
       }
 
-      logger.info(`Encontrados ${pendingLinks.length} links pendentes.`);
+      const link = pendingQueue.shift();
 
-      for (const link of pendingLinks) {
-        try {
-          const enrichment = await fetchEnrichment(link);
-          await persistEnrichment(link.id, enrichment);
+      try {
+        const enrichment = await fetchEnrichment(link);
+        await persistEnrichment(link.id, enrichment);
 
-          const message = buildMessage(link, enrichment);
+        const message = buildMessage(link, enrichment);
 
-          if (enrichment.imageUrl) {
-            try {
-              await connection.sock.sendMessage(cachedGroupJid, {
-                image: { url: enrichment.imageUrl },
-                caption: message,
-              });
-            } catch (imageError) {
-              logger.warn({ err: imageError, linkId: link.id }, "Falha ao enviar imagem. Vou enviar texto.");
-              await connection.sock.sendMessage(cachedGroupJid, { text: message });
-            }
-          } else {
+        if (enrichment.imageUrl) {
+          try {
+            await connection.sock.sendMessage(cachedGroupJid, {
+              image: { url: enrichment.imageUrl },
+              caption: message,
+            });
+          } catch (imageError) {
+            logger.warn({ err: imageError, linkId: link.id }, "Falha ao enviar imagem. Vou enviar texto.");
             await connection.sock.sendMessage(cachedGroupJid, { text: message });
           }
-
-          await markAsSent(link.id);
-          logger.info(`Link ${link.id} enviado com sucesso.`);
-        } catch (error) {
-          const errorMessage = error && error.message ? error.message.slice(0, 500) : "Erro desconhecido";
-          await markAsFailed(link.id, errorMessage);
-          logger.error({ err: error, linkId: link.id }, "Falha ao enviar link.");
+        } else {
+          await connection.sock.sendMessage(cachedGroupJid, { text: message });
         }
+
+        await markAsSent(link.id);
+        logger.info(
+          {
+            linkId: link.id,
+            remainingInWindowQueue: pendingQueue.length,
+            nextSendInSeconds: SEND_INTERVAL_SECONDS,
+          },
+          "Link enviado com sucesso."
+        );
+      } catch (error) {
+        const errorMessage = error && error.message ? error.message.slice(0, 500) : "Erro desconhecido";
+        await markAsFailed(link.id, errorMessage);
+        logger.error({ err: error, linkId: link.id }, "Falha ao enviar link.");
       }
+
+      await delay(SEND_INTERVAL_SECONDS * 1000);
     }
 
     const waitMs = connection.reconnectDelayMs();
