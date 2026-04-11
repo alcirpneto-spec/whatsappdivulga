@@ -1059,8 +1059,8 @@ async function run() {
   while (true) {
     const connection = await startBaileysConnection();
     let cachedGroupJid = "";
-    let pendingQueue = [];
-    let nextQueueRefreshAt = 0;
+    let windowStartedAt = 0;
+    let sentInWindow = 0;
 
     while (connection.shouldReconnect()) {
       if (!connection.isReady()) {
@@ -1087,27 +1087,41 @@ async function run() {
       }
 
       const nowMs = Date.now();
-      if (nextQueueRefreshAt === 0 || nowMs >= nextQueueRefreshAt) {
-        pendingQueue = await getPendingLinks(MAX_LINKS_PER_CYCLE);
-        nextQueueRefreshAt = nowMs + QUEUE_REFRESH_INTERVAL_SECONDS * 1000;
+      if (windowStartedAt === 0 || nowMs - windowStartedAt >= QUEUE_REFRESH_INTERVAL_SECONDS * 1000) {
+        windowStartedAt = nowMs;
+        sentInWindow = 0;
 
         logger.info(
           {
-            pendingCount: pendingQueue.length,
-            refreshInSeconds: QUEUE_REFRESH_INTERVAL_SECONDS,
+            queueRefreshIntervalSeconds: QUEUE_REFRESH_INTERVAL_SECONDS,
             sendIntervalSeconds: SEND_INTERVAL_SECONDS,
+            maxLinksPerWindow: MAX_LINKS_PER_CYCLE,
           },
-          "Fila de envio atualizada para a nova janela."
+          "Nova janela de envio iniciada."
         );
       }
 
-      if (pendingQueue.length === 0) {
-        const waitMs = Math.max(1000, Math.min(POLL_INTERVAL_SECONDS * 1000, nextQueueRefreshAt - nowMs));
-        await delay(waitMs);
+      if (sentInWindow >= MAX_LINKS_PER_CYCLE) {
+        const remainingWindowMs = Math.max(1000, QUEUE_REFRESH_INTERVAL_SECONDS * 1000 - (nowMs - windowStartedAt));
+        logger.info(
+          {
+            sentInWindow,
+            maxLinksPerWindow: MAX_LINKS_PER_CYCLE,
+            waitSeconds: Math.ceil(remainingWindowMs / 1000),
+          },
+          "Limite de envios da janela atingido. Aguardando proxima janela."
+        );
+        await delay(remainingWindowMs);
         continue;
       }
 
-      const link = pendingQueue.shift();
+      const batch = await getPendingLinks(1);
+      if (batch.length === 0) {
+        await delay(POLL_INTERVAL_SECONDS * 1000);
+        continue;
+      }
+
+      const link = batch[0];
 
       try {
         const enrichment = await fetchEnrichment(link);
@@ -1130,10 +1144,12 @@ async function run() {
         }
 
         await markAsSent(link.id);
+        sentInWindow += 1;
         logger.info(
           {
             linkId: link.id,
-            remainingInWindowQueue: pendingQueue.length,
+            sentInWindow,
+            maxLinksPerWindow: MAX_LINKS_PER_CYCLE,
             nextSendInSeconds: SEND_INTERVAL_SECONDS,
           },
           "Link enviado com sucesso."

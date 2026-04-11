@@ -318,9 +318,10 @@ Cadência de verificação do banco no `baileys-worker`:
 - `MAX_LINKS_PER_CYCLE=10` (quantidade maxima de itens na fila por janela)
 
 Fluxo de envio cadenciado:
-- no inicio da janela, o worker busca pendentes no banco (`MAX_LINKS_PER_CYCLE`)
-- envia um item por vez, respeitando `SEND_INTERVAL_SECONDS`
-- ao fim da janela (`QUEUE_REFRESH_INTERVAL_SECONDS`), recarrega a fila com novos pendentes
+- no inicio da janela, o worker zera o contador de envios da janela
+- envia um item pendente por vez, respeitando `SEND_INTERVAL_SECONDS`
+- para quando atingir `MAX_LINKS_PER_CYCLE` na janela atual
+- inicia nova janela ao completar `QUEUE_REFRESH_INTERVAL_SECONDS`
 
 Cadência de descoberta da Shopee no `shopee-discoverer`:
 - `SCHEDULE_INTERVAL_MINUTES=30` (padrão atual: 30 minutos)
