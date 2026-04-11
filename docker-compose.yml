@@ -3,10 +3,12 @@ services:
     image: postgres:16-alpine
     container_name: whatsappdivulga-db
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - POSTGRES_DB=whatsappdivulga
-      - POSTGRES_USER=bot
-      - POSTGRES_PASSWORD=botpass
+      - POSTGRES_DB=${POSTGRES_DB:-whatsappdivulga}
+      - POSTGRES_USER=${POSTGRES_USER:-bot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-botpass}
     ports:
       - "5432:5432"
     volumes:
@@ -25,13 +27,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgresql://bot:botpass@db:5432/whatsappdivulga
-      - WHATSAPP_GROUP_NAME=Achadinhos Online TOP
-      - BAILEYS_GROUP_JID=
-      - POLL_INTERVAL_SECONDS=60
-      - MAX_LINKS_PER_CYCLE=10
-      - LOG_LEVEL=info
+      - DATABASE_URL=${DATABASE_URL:-postgresql://bot:botpass@db:5432/whatsappdivulga}
+      - WHATSAPP_GROUP_NAME=${WHATSAPP_GROUP_NAME:-Achadinhos Online TOP}
+      - BAILEYS_GROUP_JID=${BAILEYS_GROUP_JID:-}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-60}
+      - MAX_LINKS_PER_CYCLE=${MAX_LINKS_PER_CYCLE:-10}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./baileys-auth:/app/auth
 
@@ -44,8 +48,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgresql://bot:botpass@db:5432/whatsappdivulga
+      - DATABASE_URL=${DATABASE_URL:-postgresql://bot:botpass@db:5432/whatsappdivulga}
       - USE_SHOPEE_API=${USE_SHOPEE_API:-True}
       - SCHEDULE_INTERVAL_MINUTES=${SCHEDULE_INTERVAL_MINUTES:-30}
       - SHOPEE_DISCOVERY_LIMIT=${SHOPEE_DISCOVERY_LIMIT:-10}
