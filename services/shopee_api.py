@@ -86,6 +86,25 @@ class ShopeeAffiliateAPI:
     def search_products(self, keyword="", limit=10, category_id=None, list_type=None):
         """Busca produtos por palavra-chave, categoria e tipo de lista."""
         query_by_category = """
+        query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page, productCatId: $productCatId) {
+                nodes {
+                    itemId
+                    productName
+                    price
+                    imageUrl
+                    sales
+                    shopName
+                    productLink
+                    offerLink
+                    commissionRate
+                    productCatIds
+                }
+            }
+        }
+        """
+
+        query_by_category_with_list_type = """
         query ($keyword: String, $limit: Int, $page: Int, $productCatId: Int, $listType: Int) {
             productOfferV2(keyword: $keyword, limit: $limit, page: $page, productCatId: $productCatId, listType: $listType) {
                 nodes {
@@ -105,6 +124,25 @@ class ShopeeAffiliateAPI:
         """
 
         query_by_keyword = """
+        query ($keyword: String, $limit: Int, $page: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page) {
+                nodes {
+                    itemId
+                    productName
+                    price
+                    imageUrl
+                    sales
+                    shopName
+                    productLink
+                    offerLink
+                    commissionRate
+                    productCatIds
+                }
+            }
+        }
+        """
+
+        query_by_keyword_with_list_type = """
         query ($keyword: String, $limit: Int, $page: Int, $listType: Int) {
             productOfferV2(keyword: $keyword, limit: $limit, page: $page, listType: $listType) {
                 nodes {
@@ -125,25 +163,40 @@ class ShopeeAffiliateAPI:
 
         try:
             variables = {"keyword": keyword or "", "limit": int(limit), "page": 1}
-            if list_type is not None:
+            use_list_type = list_type is not None and int(list_type) > 0
+            if use_list_type:
                 variables["listType"] = int(list_type)
             data = None
 
             if category_id is not None:
                 variables_with_category = dict(variables)
                 variables_with_category["productCatId"] = int(category_id)
-                data = self._execute_graphql(query_by_category, variables_with_category)
+                category_query = query_by_category_with_list_type if use_list_type else query_by_category
+                data = self._execute_graphql(category_query, variables_with_category)
 
                 if data.get("errors"):
                     error_text = str(data.get("errors", "")).lower()
-                    if "unknown argument" in error_text or "cannot query field" in error_text:
+                    if "must contain matchid" in error_text and use_list_type:
+                        logging.warning("listType exige matchId neste contexto. Fazendo fallback sem listType.")
+                        fallback_vars = {"keyword": keyword or "", "limit": int(limit), "page": 1, "productCatId": int(category_id)}
+                        data = self._execute_graphql(query_by_category, fallback_vars)
+                    elif "unknown argument" in error_text or "cannot query field" in error_text:
                         logging.warning(
                             "Schema sem suporte de categoria na query atual. Fazendo fallback para keyword."
                         )
-                        data = self._execute_graphql(query_by_keyword, variables)
+                        keyword_query = query_by_keyword_with_list_type if use_list_type else query_by_keyword
+                        data = self._execute_graphql(keyword_query, variables)
 
             if data is None:
-                data = self._execute_graphql(query_by_keyword, variables)
+                keyword_query = query_by_keyword_with_list_type if use_list_type else query_by_keyword
+                data = self._execute_graphql(keyword_query, variables)
+
+                if data.get("errors") and use_list_type:
+                    error_text = str(data.get("errors", "")).lower()
+                    if "must contain matchid" in error_text:
+                        logging.warning("listType exige matchId neste contexto. Fazendo fallback sem listType.")
+                        fallback_vars = {"keyword": keyword or "", "limit": int(limit), "page": 1}
+                        data = self._execute_graphql(query_by_keyword, fallback_vars)
 
             if data.get("errors"):
                 logging.error("Erro GraphQL na busca de produtos Shopee: %s", data["errors"])
