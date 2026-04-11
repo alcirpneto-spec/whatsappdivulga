@@ -31,4 +31,7 @@ chromedriver/
 geckodriver/
 *.exe
 baileys-auth/
-baileys-bot/node_modules/
+bailey-auth/
+baileys-auth/
+.env
+.env.local

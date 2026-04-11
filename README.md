@@ -145,13 +145,17 @@ Com acesso à API de afiliados da Shopee, o sistema pode operar em **modo autom�
 ### Como Ativar
 1. Cadastre-se no [Shopee Affiliate](https://affiliate.shopee.com.br/)
 2. Obtenha `APP_ID`, `APP_SECRET` e `AFFILIATE_ID`
-3. Configure em `config.py`:
-   ```python
-   USE_SHOPEE_API = True
-   SHOPEE_APP_ID = "seu_app_id"
-   SHOPEE_APP_SECRET = "seu_app_secret"
-   SHOPEE_AFFILIATE_ID = "seu_affiliate_id"
-   ```
+3. Configure por variáveis de ambiente (recomendado):
+
+  PowerShell (sessão atual):
+  ```powershell
+  $env:USE_SHOPEE_API="True"
+  $env:SHOPEE_APP_ID="seu_app_id"
+  $env:SHOPEE_APP_SECRET="seu_app_secret"
+  $env:SHOPEE_AFFILIATE_ID="seu_affiliate_id"
+  ```
+
+  Com Docker Compose, você também pode criar `.env` a partir de `.env.example`.
 4. Rode: `python main.py`
 
 O sistema passará a descobrir e promover produtos automaticamente!
@@ -173,6 +177,15 @@ docker compose up --build
 2. No primeiro start, o `baileys-worker` vai imprimir um QR Code no log.
 3. Escaneie o QR com seu WhatsApp para autenticar a sessão.
 4. A sessão fica persistida na pasta `baileys-auth/`.
+
+Se for usar descoberta automática com API Shopee no serviço Python (profile `legacy-python`), preencha as variáveis no arquivo `.env`:
+
+```env
+USE_SHOPEE_API=True
+SHOPEE_APP_ID=seu_app_id
+SHOPEE_APP_SECRET=seu_app_secret
+SHOPEE_AFFILIATE_ID=seu_affiliate_id
+```
 
 ### Configuração do grupo
 

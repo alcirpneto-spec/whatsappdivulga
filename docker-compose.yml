@@ -51,7 +51,10 @@ services:
       - CHROME_BINARY_PATH=/usr/bin/chromium
       - WHATSAPP_PROFILE_DIR=/app/whatsapp-profile
       - USE_WHATSAPP_AUTOMATION=True
-      - USE_SHOPEE_API=False
+      - USE_SHOPEE_API=${USE_SHOPEE_API:-False}
+      - SHOPEE_APP_ID=${SHOPEE_APP_ID:-}
+      - SHOPEE_APP_SECRET=${SHOPEE_APP_SECRET:-}
+      - SHOPEE_AFFILIATE_ID=${SHOPEE_AFFILIATE_ID:-}
     command: python main.py
 
 volumes:
