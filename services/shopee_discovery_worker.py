@@ -142,8 +142,17 @@ class ShopeeDiscoveryWorker:
             return
 
         if not self.keywords:
-            logging.warning("Nenhuma keyword configurada para descoberta Shopee.")
-            return
+            if self.list_type > 0:
+                logging.info(
+                    "SHOPEE_DISCOVERY_KEYWORDS vazio. Usando descoberta global por listType=%s.",
+                    self.list_type,
+                )
+                search_terms = [""]
+            else:
+                logging.warning("Nenhuma keyword configurada para descoberta Shopee.")
+                return
+        else:
+            search_terms = self.keywords
 
         inserted = 0
         skipped = 0
@@ -164,9 +173,9 @@ class ShopeeDiscoveryWorker:
 
         try:
             with conn.cursor() as cur:
-                per_keyword_limit = max(1, self.limit // len(self.keywords))
+                per_keyword_limit = max(1, self.limit // len(search_terms))
 
-                for keyword in self.keywords:
+                for keyword in search_terms:
                     if self.allowed_category_ids:
                         category_ids = sorted(self.allowed_category_ids)
                     else:
@@ -180,12 +189,13 @@ class ShopeeDiscoveryWorker:
                             list_type=self.list_type if self.list_type > 0 else None,
                         )
 
+                        label = keyword if keyword else "(global)"
                         if category_id is None:
-                            logging.info("Shopee keyword '%s': %s produtos retornados", keyword, len(products))
+                            logging.info("Shopee termo '%s': %s produtos retornados", label, len(products))
                         else:
                             logging.info(
-                                "Shopee keyword '%s' categoria %s: %s produtos retornados",
-                                keyword,
+                                "Shopee termo '%s' categoria %s: %s produtos retornados",
+                                label,
                                 category_id,
                                 len(products),
                             )

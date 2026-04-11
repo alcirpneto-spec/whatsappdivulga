@@ -244,6 +244,7 @@ Controle anti-repeticao:
 
 Observacao: o worker tenta buscar por categoria usando `productCatId` no `productOfferV2` e usa `productCatIds` do retorno para validar filtros. Se o schema da conta nao aceitar esses campos, ele faz fallback automatico para busca por keyword.
 Para tentar trazer itens da aba "Melhor performance", configure `SHOPEE_LIST_TYPE` com o valor correspondente da sua conta (ex.: 1, 2, etc). Use `0` para desativar.
+Se quiser busca global por performance (sem depender de palavras), deixe `SHOPEE_DISCOVERY_KEYWORDS` vazio e use `SHOPEE_LIST_TYPE > 0`.
 
 ### Configuração do grupo
 
