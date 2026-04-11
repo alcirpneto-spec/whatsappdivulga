@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel de Links | WhatsApp Divulga</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <main class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">whatsapp divulga</p>
+        <h1>Cadastro de Ofertas</h1>
+        <p class="subtitle">Cadastre links em segundos e deixe o worker enviar automaticamente.</p>
+      </header>
+
+      <section class="panel">
+        <form id="link-form" class="form-grid" novalidate>
+          <label class="field">
+            <span>Codigo/ID do Produto</span>
+            <input id="product_name" name="product_name" type="text" placeholder="Ex: 1MZKB6-53Q4" required />
+          </label>
+
+          <label class="field field-wide">
+            <span>URL de Afiliado</span>
+            <input
+              id="affiliate_url"
+              name="affiliate_url"
+              type="url"
+              placeholder="https://..."
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Fonte</span>
+            <select id="source" name="source">
+              <option value="auto" selected>Auto detectar</option>
+              <option value="mercado_livre">Mercado Livre</option>
+              <option value="amazon">Amazon</option>
+              <option value="shopee">Shopee</option>
+            </select>
+          </label>
+
+          <div class="actions">
+            <button id="submit-btn" type="submit">Cadastrar Link</button>
+          </div>
+        </form>
+
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel recent-panel">
+        <div class="recent-header">
+          <h2>Ultimos Cadastros</h2>
+          <button id="refresh-btn" type="button" class="ghost">Atualizar</button>
+        </div>
+        <div id="recent-list" class="recent-list"></div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('link-form');
+      const statusEl = document.getElementById('status');
+      const submitBtn = document.getElementById('submit-btn');
+      const refreshBtn = document.getElementById('refresh-btn');
+      const recentList = document.getElementById('recent-list');
+
+      function setStatus(message, kind = 'info') {
+        statusEl.textContent = message;
+        statusEl.dataset.kind = kind;
+      }
+
+      function formatDate(isoDate) {
+        if (!isoDate) return '-';
+        const date = new Date(isoDate);
+        if (Number.isNaN(date.getTime())) return '-';
+        return date.toLocaleString('pt-BR');
+      }
+
+      function renderRecent(items) {
+        if (!items || items.length === 0) {
+          recentList.innerHTML = '<p class="empty">Nenhum cadastro encontrado ainda.</p>';
+          return;
+        }
+
+        recentList.innerHTML = items
+          .map(
+            (item) => `
+              <article class="recent-item">
+                <div class="tag">${item.source || '-'}</div>
+                <h3>${item.product_name || '-'}</h3>
+                <a href="${item.affiliate_url}" target="_blank" rel="noopener noreferrer">${item.affiliate_url}</a>
+                <p>Criado em: ${formatDate(item.created_at)}</p>
+              </article>
+            `
+          )
+          .join('');
+      }
+
+      async function loadRecent() {
+        try {
+          const response = await fetch('/api/recent');
+          const data = await response.json();
+          renderRecent(data.items || []);
+        } catch (error) {
+          recentList.innerHTML = '<p class="empty">Erro ao carregar lista recente.</p>';
+        }
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setStatus('Enviando...', 'info');
+        submitBtn.disabled = true;
+
+        const payload = {
+          product_name: document.getElementById('product_name').value.trim(),
+          affiliate_url: document.getElementById('affiliate_url').value.trim(),
+          source: document.getElementById('source').value,
+        };
+
+        try {
+          const response = await fetch('/api/affiliate-links', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setStatus(data.message || 'Falha ao cadastrar link.', 'error');
+            return;
+          }
+
+          setStatus(data.message || 'Cadastro realizado com sucesso.', 'success');
+          form.reset();
+          await loadRecent();
+        } catch (error) {
+          setStatus('Erro de rede ao cadastrar. Tente novamente.', 'error');
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+
+      refreshBtn.addEventListener('click', loadRecent);
+
+      loadRecent();
+    </script>
+  </body>
+</html>

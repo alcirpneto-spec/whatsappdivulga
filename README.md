@@ -193,6 +193,7 @@ Este modo sobe tres containers no Docker:
 - `db` (PostgreSQL): onde você insere os links de afiliado
 - `shopee-discoverer`: descobre produtos da Shopee e grava no banco a cada 30 minutos
 - `baileys-worker`: conecta no WhatsApp com Baileys e envia links novos no grupo
+- `link-admin-web`: tela web para cadastrar links sem SQL manual
 
 ### Como subir
 
@@ -206,6 +207,26 @@ Para produção em background:
 
 ```bash
 docker compose up -d --build
+```
+
+### Tela web de cadastro (laranja/preto)
+
+Depois de subir com Docker Compose, acesse:
+
+```text
+http://localhost:8080
+```
+
+Funcionalidades da tela:
+- cadastra `product_name` (codigo/id) + `affiliate_url`
+- permite escolher `source` ou usar `Auto detectar`
+- grava na tabela `affiliate_links` com `processed = false` (padrao), pronta para o worker enviar
+- mostra os ultimos cadastros em tempo real
+
+Configuracao de porta no `.env`:
+
+```env
+WEB_PORT=8080
 ```
 
 2. No primeiro start, o `baileys-worker` vai imprimir um QR Code no log.
