@@ -194,6 +194,7 @@ Este modo sobe tres containers no Docker:
 - `shopee-discoverer`: descobre produtos da Shopee e grava no banco a cada 30 minutos
 - `baileys-worker`: conecta no WhatsApp com Baileys e envia links novos no grupo
 - `link-admin-web`: tela web para cadastrar links sem SQL manual
+- `nginx`: proxy reverso para publicar o painel na porta 80
 
 ### Como subir
 
@@ -214,7 +215,7 @@ docker compose up -d --build
 Depois de subir com Docker Compose, acesse:
 
 ```text
-http://localhost:8080
+http://localhost
 ```
 
 Funcionalidades da tela:
@@ -228,6 +229,29 @@ Configuracao de porta no `.env`:
 ```env
 WEB_PORT=8080
 ```
+
+## Deploy na AWS com Nginx
+
+Com o compose atual, o Nginx publica o painel web na porta `80` da sua EC2.
+
+Checklist rapido:
+- no Security Group da EC2, liberar entrada `TCP 80` (e `443` quando ativar HTTPS)
+- manter `5432` fechado para internet (use apenas rede interna/VPN)
+- apontar seu dominio (A record) para o IP publico da EC2
+
+Subir/atualizar stack:
+
+```bash
+docker compose up -d --build
+```
+
+Validacao:
+
+```bash
+curl http://localhost/health
+```
+
+Deve retornar status `ok`.
 
 2. No primeiro start, o `baileys-worker` vai imprimir um QR Code no log.
 3. Escaneie o QR com seu WhatsApp para autenticar a sessão.
