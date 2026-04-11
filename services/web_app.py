@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import psycopg2
@@ -14,6 +15,21 @@ def create_app() -> Flask:
 
     database_url = os.getenv("DATABASE_URL", "").strip()
 
+    def get_env_bool(name: str, default: bool) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in ("1", "true", "yes", "on")
+
+    def get_env_int(name: str, default: int) -> int:
+        value = os.getenv(name)
+        if value is None or not value.strip():
+            return default
+        try:
+            return int(value.strip())
+        except ValueError:
+            return default
+
     def detect_source(url: str) -> str:
         host = (urlparse(url).netloc or "").lower()
         if "amazon." in host:
@@ -28,6 +44,31 @@ def create_app() -> Flask:
         if not database_url:
             raise RuntimeError("DATABASE_URL nao configurada")
         return psycopg2.connect(database_url)
+
+    def ensure_worker_runs_table():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_runs (
+                        id BIGSERIAL PRIMARY KEY,
+                        worker_name TEXT NOT NULL,
+                        run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        status TEXT NOT NULL,
+                        inserted_count INTEGER NOT NULL DEFAULT 0,
+                        skipped_count INTEGER NOT NULL DEFAULT 0,
+                        error_message TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_worker_runs_worker_name_run_at
+                        ON worker_runs (worker_name, run_at DESC)
+                    """
+                )
+
+    ensure_worker_runs_table()
 
     @app.get("/health")
     def health():
@@ -127,6 +168,101 @@ def create_app() -> Flask:
             )
         except Exception as exc:
             return jsonify({"ok": False, "message": f"Erro ao salvar: {exc}"}), 500
+
+    @app.get("/api/dashboard")
+    def dashboard_status():
+        try:
+            use_shopee_api = get_env_bool("USE_SHOPEE_API", True)
+            interval_minutes = max(1, get_env_int("SCHEDULE_INTERVAL_MINUTES", 30))
+
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT run_at, status, inserted_count, skipped_count, error_message
+                        FROM worker_runs
+                        WHERE worker_name = 'shopee_discovery'
+                        ORDER BY run_at DESC
+                        LIMIT 1
+                        """
+                    )
+                    run_row = cur.fetchone()
+
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM affiliate_links
+                        WHERE processed = FALSE
+                        """
+                    )
+                    pending_total = cur.fetchone()[0]
+
+                    cur.execute(
+                        """
+                        SELECT source, COUNT(*)
+                        FROM affiliate_links
+                        WHERE processed = FALSE
+                        GROUP BY source
+                        ORDER BY COUNT(*) DESC
+                        """
+                    )
+                    pending_by_source_rows = cur.fetchall()
+
+                    cur.execute(
+                        """
+                        SELECT id, product_name, source, created_at
+                        FROM affiliate_links
+                        WHERE processed = FALSE
+                        ORDER BY created_at ASC
+                        LIMIT 10
+                        """
+                    )
+                    pending_items_rows = cur.fetchall()
+
+            now = datetime.now(timezone.utc)
+            last_run_at = run_row[0] if run_row else None
+            next_run_at = (last_run_at + timedelta(minutes=interval_minutes)) if last_run_at else None
+            seconds_until_next_run = 0
+            if next_run_at:
+                seconds_until_next_run = max(0, int((next_run_at - now).total_seconds()))
+
+            pending_by_source = {
+                (row[0] or "desconhecido"): row[1]
+                for row in pending_by_source_rows
+            }
+
+            pending_items = [
+                {
+                    "id": row[0],
+                    "product_name": row[1],
+                    "source": row[2],
+                    "created_at": row[3].isoformat() if row[3] else None,
+                }
+                for row in pending_items_rows
+            ]
+
+            shopee_run = {
+                "enabled": use_shopee_api,
+                "interval_minutes": interval_minutes,
+                "last_run_at": last_run_at.isoformat() if last_run_at else None,
+                "next_run_at": next_run_at.isoformat() if next_run_at else None,
+                "seconds_until_next_run": seconds_until_next_run,
+                "status": run_row[1] if run_row else "unknown",
+                "inserted_count": run_row[2] if run_row else 0,
+                "skipped_count": run_row[3] if run_row else 0,
+                "error_message": run_row[4] if run_row else "",
+            }
+
+            queue = {
+                "pending_total": pending_total,
+                "pending_by_source": pending_by_source,
+                "pending_items": pending_items,
+                "refresh_seconds": 300,
+            }
+
+            return jsonify({"shopee_discovery": shopee_run, "queue": queue}), 200
+        except Exception as exc:
+            return jsonify({"message": str(exc)}), 500
 
     return app
 

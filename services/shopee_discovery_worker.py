@@ -118,6 +118,50 @@ class ShopeeDiscoveryWorker:
             raise ValueError("DATABASE_URL nao definido para o worker de descoberta Shopee.")
 
         self.api = ShopeeAffiliateAPI()
+        self._ensure_worker_runs_table()
+
+    def _ensure_worker_runs_table(self):
+        conn = psycopg2.connect(self.database_url)
+        conn.autocommit = True
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_runs (
+                        id BIGSERIAL PRIMARY KEY,
+                        worker_name TEXT NOT NULL,
+                        run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        status TEXT NOT NULL,
+                        inserted_count INTEGER NOT NULL DEFAULT 0,
+                        skipped_count INTEGER NOT NULL DEFAULT 0,
+                        error_message TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_worker_runs_worker_name_run_at
+                        ON worker_runs (worker_name, run_at DESC)
+                    """
+                )
+        finally:
+            conn.close()
+
+    def _record_run(self, status: str, inserted: int, skipped: int, error_message: str = ""):
+        conn = psycopg2.connect(self.database_url)
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_runs (worker_name, status, inserted_count, skipped_count, error_message)
+                    VALUES (%s, %s, %s, %s, NULLIF(%s, ''))
+                    """,
+                    ("shopee_discovery", status, inserted, skipped, error_message or ""),
+                )
+        finally:
+            conn.close()
 
     def _should_skip_product(self, product: dict):
         sales = product.get("sold", 0)
@@ -188,6 +232,7 @@ class ShopeeDiscoveryWorker:
     def run_cycle(self):
         if not self.use_shopee_api:
             logging.info("USE_SHOPEE_API=False. Ciclo de descoberta Shopee ignorado.")
+            self._record_run("skipped", 0, 0, "USE_SHOPEE_API=False")
             return
 
         if self.is_top_performing_mode:
@@ -226,6 +271,7 @@ class ShopeeDiscoveryWorker:
         }
         seen_item_ids = set()
         seen_urls = set()
+        run_success = False
 
         conn = psycopg2.connect(self.database_url)
         conn.autocommit = False
@@ -405,11 +451,16 @@ class ShopeeDiscoveryWorker:
                 skipped,
                 skipped_by_filter,
             )
+            run_success = True
         except Exception:
             conn.rollback()
             logging.exception("Erro no ciclo de descoberta Shopee")
+            self._record_run("error", inserted, skipped, "Erro no ciclo de descoberta Shopee")
         finally:
             conn.close()
+
+        if run_success:
+            self._record_run("ok", inserted, skipped)
 
     def run(self):
         logging.info("Iniciando worker Shopee. Intervalo=%s min, limit=%s", self.interval_minutes, self.limit)

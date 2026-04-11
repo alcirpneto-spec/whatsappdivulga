@@ -203,6 +203,64 @@ h2 {
   gap: 12px;
 }
 
+.monitor-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monitor-card {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 106, 0, 0.24);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.monitor-label {
+  margin: 0;
+  color: #ffcf9f;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06rem;
+}
+
+.monitor-value {
+  margin: 8px 0;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  line-height: 0.95;
+}
+
+.monitor-meta {
+  margin: 0;
+  color: #d5d5d5;
+  font-size: 0.88rem;
+}
+
+.queue-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.queue-item {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 106, 0, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.queue-item h3 {
+  margin: 8px 0 6px;
+}
+
+.queue-item p {
+  margin: 0;
+  color: #d0d0d0;
+  font-size: 0.86rem;
+}
+
 .recent-item {
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(255, 106, 0, 0.24);
@@ -255,6 +313,10 @@ h2 {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-grid {
     grid-template-columns: 1fr;
   }
 

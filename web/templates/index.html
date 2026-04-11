@@ -66,6 +66,29 @@
         </div>
         <div id="recent-list" class="recent-list"></div>
       </section>
+
+      <section class="panel monitor-panel">
+        <div class="recent-header">
+          <h2>Monitor de Fila e Shopee</h2>
+          <button id="refresh-monitor-btn" type="button" class="ghost">Atualizar Monitor</button>
+        </div>
+
+        <div class="monitor-grid">
+          <article class="monitor-card">
+            <p class="monitor-label">Proxima busca Shopee</p>
+            <p id="shopee-countdown" class="monitor-value">--:--</p>
+            <p id="shopee-meta" class="monitor-meta">Somente descoberta Shopee.</p>
+          </article>
+
+          <article class="monitor-card">
+            <p class="monitor-label">Fila pendente para postar</p>
+            <p id="queue-total" class="monitor-value">0</p>
+            <p id="queue-by-source" class="monitor-meta">Carregando...</p>
+          </article>
+        </div>
+
+        <div id="queue-list" class="queue-list"></div>
+      </section>
     </main>
 
     <script>
@@ -73,7 +96,15 @@
       const statusEl = document.getElementById('status');
       const submitBtn = document.getElementById('submit-btn');
       const refreshBtn = document.getElementById('refresh-btn');
+      const refreshMonitorBtn = document.getElementById('refresh-monitor-btn');
       const recentList = document.getElementById('recent-list');
+      const shopeeCountdownEl = document.getElementById('shopee-countdown');
+      const shopeeMetaEl = document.getElementById('shopee-meta');
+      const queueTotalEl = document.getElementById('queue-total');
+      const queueBySourceEl = document.getElementById('queue-by-source');
+      const queueListEl = document.getElementById('queue-list');
+
+      let countdownSeconds = 0;
 
       function setStatus(message, kind = 'info') {
         statusEl.textContent = message;
@@ -105,6 +136,79 @@
             `
           )
           .join('');
+      }
+
+      function formatDuration(totalSeconds) {
+        const safe = Math.max(0, Number(totalSeconds) || 0);
+        const hours = Math.floor(safe / 3600);
+        const minutes = Math.floor((safe % 3600) / 60);
+        const seconds = safe % 60;
+
+        if (hours > 0) {
+          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+
+      function renderQueueItems(items) {
+        if (!items || items.length === 0) {
+          queueListEl.innerHTML = '<p class="empty">Nenhum item pendente na fila.</p>';
+          return;
+        }
+
+        queueListEl.innerHTML = items
+          .map(
+            (item) => `
+              <article class="queue-item">
+                <div class="tag">${item.source || '-'}</div>
+                <h3>${item.product_name || '-'}</h3>
+                <p>Adicionado em: ${formatDate(item.created_at)}</p>
+              </article>
+            `
+          )
+          .join('');
+      }
+
+      function renderMonitor(data) {
+        const shopee = data?.shopee_discovery || {};
+        const queue = data?.queue || {};
+
+        countdownSeconds = Math.max(0, Number(shopee.seconds_until_next_run) || 0);
+        shopeeCountdownEl.textContent = formatDuration(countdownSeconds);
+
+        if (!shopee.enabled) {
+          shopeeMetaEl.textContent = 'Descoberta Shopee desativada no .env.';
+        } else {
+          const status = shopee.status || 'unknown';
+          const interval = shopee.interval_minutes || 30;
+          shopeeMetaEl.textContent = `Status: ${status} | Ciclo: ${interval} min | Mercado Livre e Amazon seguem fluxo normal.`;
+        }
+
+        const pendingTotal = Number(queue.pending_total) || 0;
+        queueTotalEl.textContent = String(pendingTotal);
+
+        const bySource = queue.pending_by_source || {};
+        const sourceText = Object.entries(bySource)
+          .map(([source, total]) => `${source}: ${total}`)
+          .join(' | ');
+        queueBySourceEl.textContent = sourceText || 'Sem pendencias por fonte.';
+
+        renderQueueItems(queue.pending_items || []);
+      }
+
+      async function loadMonitor() {
+        try {
+          const response = await fetch('/api/dashboard');
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.message || 'Falha ao carregar monitor.');
+          }
+          renderMonitor(data);
+        } catch (error) {
+          shopeeMetaEl.textContent = 'Erro ao carregar monitor.';
+          queueBySourceEl.textContent = 'Erro ao carregar fila.';
+          queueListEl.innerHTML = '<p class="empty">Erro ao carregar fila pendente.</p>';
+        }
       }
 
       async function loadRecent() {
@@ -152,8 +256,17 @@
       });
 
       refreshBtn.addEventListener('click', loadRecent);
+      refreshMonitorBtn.addEventListener('click', loadMonitor);
 
       loadRecent();
+      loadMonitor();
+
+      setInterval(() => {
+        countdownSeconds = Math.max(0, countdownSeconds - 1);
+        shopeeCountdownEl.textContent = formatDuration(countdownSeconds);
+      }, 1000);
+
+      setInterval(loadMonitor, 5 * 60 * 1000);
     </script>
   </body>
 </html>
