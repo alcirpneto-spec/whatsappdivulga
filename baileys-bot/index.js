@@ -911,7 +911,12 @@ async function getPendingLinks(limit) {
          , COALESCE(metadata_json, '{}'::jsonb) AS metadata_json
       FROM affiliate_links
       WHERE processed = FALSE
-      ORDER BY created_at ASC
+      ORDER BY
+        CASE
+          WHEN lower(COALESCE(metadata_json->>'manual_priority', 'false')) IN ('true', '1', 'yes', 'on') THEN 0
+          ELSE 1
+        END,
+        created_at ASC
       LIMIT $1
     `,
     [limit]
@@ -958,9 +963,267 @@ function isRateOverlimitError(error) {
   );
 }
 
+const lastTemplateIndexByGroup = new Map();
+
+function normalizeForMatch(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+const MESSAGE_TEMPLATE_GROUPS = {
+  moda_feminina: {
+    keywords: [
+      "legging",
+      "leg",
+      "pantalona",
+      "alfaiataria feminina",
+      "jogger feminina",
+      "calca feminina",
+      "calca canelada",
+      "meia calca",
+    ],
+    templates: [
+      { headline: "🔥 *Look novo com preco de oportunidade*", hook: "Conforto e estilo para usar hoje." },
+      { headline: "✨ *Achadinho feminino do dia*", hook: "Peca versatil que combina com tudo." },
+      { headline: "💃 *Seu look merece esse destaque*", hook: "Modelo em alta com otimo custo-beneficio." },
+      { headline: "🛍️ *Oferta feminina selecionada pra voce*", hook: "Confortavel para trabalho, passeio e rotina." },
+      { headline: "💥 *Calca queridinha em promocao*", hook: "Ideal para montar producoes lindas gastando menos." },
+    ],
+  },
+  pijama_babydoll: {
+    keywords: ["baby doll", "babydoll", "short doll", "pijama", "pijamas"],
+    templates: [
+      { headline: "🌙 *Conforto para noites mais leves*", hook: "Pijama lindo e pratico para o dia a dia." },
+      { headline: "🛌 *Oferta especial de pijama*", hook: "Modelinho fresquinho e confortavel para descansar." },
+      { headline: "✨ *Seu momento de descanso com estilo*", hook: "Escolha certeira para dormir melhor." },
+      { headline: "💖 *Achado de baby doll em destaque*", hook: "Otimo preco para renovar seu kit de noite." },
+      { headline: "🔥 *Pijama feminino com precinho bom*", hook: "Confortavel, bonito e pronto para usar." },
+    ],
+  },
+  moda_masculina: {
+    keywords: [
+      "bermuda",
+      "camisa polo",
+      "camiseta",
+      "jogger masculina",
+      "calca sarja",
+      "jaqueta masculina",
+      "shorts masculino",
+      "calca masculina",
+    ],
+    templates: [
+      { headline: "👔 *Estilo masculino com preco justo*", hook: "Visual alinhado para todas as ocasioes." },
+      { headline: "🔥 *Peca masculina em oferta hoje*", hook: "Conforto e qualidade para o dia a dia." },
+      { headline: "💼 *Achado masculino selecionado*", hook: "Modelo pratico para trabalho e lazer." },
+      { headline: "⚡ *Oportunidade para renovar o guarda-roupa*", hook: "Item versatil com excelente custo-beneficio." },
+      { headline: "🛍️ *Oferta masculina que vale o clique*", hook: "Estilo e conforto no mesmo produto." },
+    ],
+  },
+  audio_fones: {
+    keywords: ["fone", "bluetooth", "tws", "earbud", "caixa de som", "som estereo"],
+    templates: [
+      { headline: "🎧 *Som sem fio com preco de achado*", hook: "Ideal para treino, trabalho e rotina." },
+      { headline: "🔊 *Audio em destaque hoje*", hook: "Modelo queridinho com otimo custo-beneficio." },
+      { headline: "⚡ *Upgrade no som sem gastar muito*", hook: "Conexao pratica e uso no dia inteiro." },
+      { headline: "🔥 *Fone bluetooth em promocao*", hook: "Boa opcao para quem curte praticidade." },
+      { headline: "🎵 *Achadinho tech para ouvir melhor*", hook: "Produto versatil para todas as horas." },
+    ],
+  },
+  cozinha_utilidades: {
+    keywords: [
+      "marmita",
+      "pote",
+      "fatiador",
+      "cozinha",
+      "panela",
+      "chaleira",
+      "escorredor",
+      "porta temperos",
+      "faqueiro",
+      "tacas",
+      "xicara",
+      "coador",
+      "torneira",
+      "utensilios",
+    ],
+    templates: [
+      { headline: "🍳 *Cozinha mais pratica com esse achado*", hook: "Utilidade que facilita sua rotina." },
+      { headline: "🏠 *Item de casa em oferta hoje*", hook: "Organizacao e praticidade em um so produto." },
+      { headline: "✨ *Achadinho util para o dia a dia*", hook: "Perfeito para quem ama praticidade." },
+      { headline: "🛒 *Utilidade de cozinha que compensa*", hook: "Produto funcional com preco atraente." },
+      { headline: "🔥 *Oferta selecionada para sua cozinha*", hook: "Mais eficiencia e conforto na rotina." },
+    ],
+  },
+  ferramentas_reparo: {
+    keywords: [
+      "broca",
+      "parafusadeira",
+      "catraca",
+      "ferramenta",
+      "pistola",
+      "veda",
+      "impermeabil",
+      "manta liquida",
+      "tinta",
+      "verniz",
+      "spray",
+      "chave",
+      "alicate",
+      "pulverizador",
+    ],
+    templates: [
+      { headline: "🛠️ *Ferramenta util com preco de oportunidade*", hook: "Boa pedida para reparos e manutencao." },
+      { headline: "⚙️ *Achado para quem resolve tudo em casa*", hook: "Pratico para obra, ajuste e melhoria." },
+      { headline: "🔥 *Produto de reparo em destaque*", hook: "Custo-beneficio forte para rotina de casa." },
+      { headline: "🏗️ *Item de manutencao que vale ter*", hook: "Mais praticidade para o seu dia a dia." },
+      { headline: "💥 *Oferta de ferramenta selecionada*", hook: "Produto funcional com excelente valor." },
+    ],
+  },
+  casa_enxoval: {
+    keywords: [
+      "lencol",
+      "lençol",
+      "coberdrom",
+      "cobertor",
+      "travesseiro",
+      "toalha",
+      "capa protetora colchao",
+      "capa de colchao",
+      "enxoval",
+      "mesa de cabeceira",
+      "quadro decorativo",
+      "garrafa termica",
+    ],
+    templates: [
+      { headline: "🛏️ *Conforto para sua casa em oferta*", hook: "Item de enxoval e casa com preco bom." },
+      { headline: "🏡 *Achadinho para deixar o lar mais completo*", hook: "Praticidade e conforto na medida certa." },
+      { headline: "✨ *Produto de casa em destaque hoje*", hook: "Excelente opcao para renovar ambientes." },
+      { headline: "🧺 *Oferta de casa e enxoval selecionada*", hook: "Mais conforto para sua rotina." },
+      { headline: "🔥 *Item para casa com otimo custo-beneficio*", hook: "Vale conferir enquanto esta nesse valor." },
+    ],
+  },
+  beleza_cuidados: {
+    keywords: [
+      "body splash",
+      "mascara",
+      "cabelo",
+      "anti idade",
+      "anti-idade",
+      "massageador",
+      "perfume",
+      "botox",
+      "hyaluron",
+      "beleza",
+      "seringa",
+    ],
+    templates: [
+      { headline: "💄 *Cuidado pessoal com preco de oportunidade*", hook: "Produto de beleza para sua rotina." },
+      { headline: "✨ *Seu autocuidado em destaque hoje*", hook: "Achadinho para se cuidar gastando menos." },
+      { headline: "🌸 *Oferta de beleza selecionada*", hook: "Boa opcao para manter sua rotina em dia." },
+      { headline: "🔥 *Produto de cuidados em promocao*", hook: "Mais praticidade no seu momento de beleza." },
+      { headline: "🧴 *Achadinho de beleza que vale o clique*", hook: "Produto util com excelente custo-beneficio." },
+    ],
+  },
+  fitness_saude: {
+    keywords: [
+      "creatina",
+      "fitness",
+      "academia",
+      "bioimpedancia",
+      "mini band",
+      "treino",
+      "esportivo",
+      "caminhada",
+      "fisioterapia",
+      "suplement",
+    ],
+    templates: [
+      { headline: "💪 *Oferta fitness para sua evolucao*", hook: "Item funcional para treino e performance." },
+      { headline: "🏋️ *Achadinho para rotina de treino*", hook: "Mais resultado com melhor custo-beneficio." },
+      { headline: "⚡ *Produto esportivo em destaque hoje*", hook: "Boa escolha para quem busca evoluir." },
+      { headline: "🔥 *Item fitness com preco de oportunidade*", hook: "Perfeito para complementar seus treinos." },
+      { headline: "🚀 *Oferta para quem leva treino a serio*", hook: "Produto pratico para sua rotina ativa." },
+    ],
+  },
+  neutro: {
+    keywords: [],
+    templates: [
+      { headline: "🔥 *Oferta selecionada pra voce*", hook: "Produto em destaque com bom custo-beneficio." },
+      { headline: "✨ *Achadinho do dia para conferir*", hook: "Oportunidade para aproveitar agora." },
+      { headline: "🛒 *Produto em evidencia hoje*", hook: "Vale dar uma olhada nesse item." },
+      { headline: "⚡ *Oferta do momento*", hook: "Achado com valor interessante para seu dia a dia." },
+      { headline: "📌 *Destaque especial de hoje*", hook: "Produto recomendado para conferir no link." },
+    ],
+  },
+};
+
+const CATEGORY_GROUP_HINTS = {
+  100017: "moda_feminina",
+  100011: "moda_masculina",
+  100535: "audio_fones",
+  100630: "beleza_cuidados",
+  100001: "fitness_saude",
+};
+
+function resolveCategoryHintGroup(metadata) {
+  const categoryCandidates = [metadata.category_id, ...(Array.isArray(metadata.category_ids) ? metadata.category_ids : [])];
+
+  for (const category of categoryCandidates) {
+    const numeric = Number.parseInt(category, 10);
+    if (!Number.isNaN(numeric) && CATEGORY_GROUP_HINTS[numeric]) {
+      return CATEGORY_GROUP_HINTS[numeric];
+    }
+  }
+
+  return "";
+}
+
+function resolveProductGroupKey(productName, metadata) {
+  const normalizedName = normalizeForMatch(productName);
+
+  for (const [groupKey, groupConfig] of Object.entries(MESSAGE_TEMPLATE_GROUPS)) {
+    if (groupKey === "neutro") {
+      continue;
+    }
+
+    if (groupConfig.keywords.some((keyword) => normalizedName.includes(normalizeForMatch(keyword)))) {
+      return groupKey;
+    }
+  }
+
+  const categoryGroup = resolveCategoryHintGroup(metadata);
+  if (categoryGroup) {
+    return categoryGroup;
+  }
+
+  return "neutro";
+}
+
+function pickTemplateForGroup(groupKey) {
+  const groupConfig = MESSAGE_TEMPLATE_GROUPS[groupKey] || MESSAGE_TEMPLATE_GROUPS.neutro;
+  const templates = groupConfig.templates;
+
+  if (!Array.isArray(templates) || templates.length === 0) {
+    return MESSAGE_TEMPLATE_GROUPS.neutro.templates[0];
+  }
+
+  const previousIndex = lastTemplateIndexByGroup.get(groupKey);
+  const candidateIndexes = templates
+    .map((_, index) => index)
+    .filter((index) => index !== previousIndex);
+
+  const randomPool = candidateIndexes.length > 0 ? candidateIndexes : [0];
+  const selectedIndex = randomPool[Math.floor(Math.random() * randomPool.length)];
+  lastTemplateIndexByGroup.set(groupKey, selectedIndex);
+
+  return templates[selectedIndex];
+}
+
 function buildMessage(link, enrichment) {
-  const sourceLabel = `Fonte: ${prettySource(inferSource(link.source, link.affiliate_url))}`;
-  const priceLabel = enrichment.priceText ? `Preço: ${enrichment.priceText}` : "";
+  const sourceLabel = `*Fonte:* ${prettySource(inferSource(link.source, link.affiliate_url))}`;
+  const priceLabel = enrichment.priceText ? `*Preco:* ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
   const metadata = {
     ...normalizeMetadata(link.metadata_json),
@@ -970,16 +1233,21 @@ function buildMessage(link, enrichment) {
   const salesValue = pickMeta(metadata.sales, metadata.sold, metadata.historical_sold);
   const shopValue = pickMeta(metadata.shop_name, metadata.shopName, metadata.store_name);
   const pricing = resolveOfferPricing(link, enrichment, metadata);
-  const originalPriceLabel = pricing.originalPriceText ? `De: ${pricing.originalPriceText}` : "";
-  const discountLabel = pricing.discountText ? `Desconto: ${pricing.discountText}` : "";
+  const originalPriceLabel = pricing.originalPriceText ? `*De:* ${pricing.originalPriceText}` : "";
+  const discountLabel = pricing.discountText ? `*Desconto:* ${pricing.discountText}` : "";
   const salesCount = parseSalesCount(salesValue);
-  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `Vendas: ${salesValue}` : "";
-  const shopLabel = shopValue ? `Loja: ${shopValue}` : "";
+  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `*Vendas:* ${salesValue}` : "";
+  const shopLabel = shopValue ? `*Loja:* ${shopValue}` : "";
+
+  const groupKey = resolveProductGroupKey(productName, metadata);
+  const selectedTemplate = pickTemplateForGroup(groupKey);
+  const hookLine = cleanText(selectedTemplate.hook);
 
   return [
-    "Oferta feita pra você!",
+    selectedTemplate.headline,
+    hookLine,
     "",
-    `Produto: ${productName}`,
+    `*Produto:* ${productName}`,
     priceLabel,
     originalPriceLabel,
     discountLabel,

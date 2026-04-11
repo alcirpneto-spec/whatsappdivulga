@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -138,15 +139,20 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "message": "Fonte invalida."}), 400
 
         try:
+            manual_metadata = {
+                "manual_priority": True,
+                "created_via": "front_web",
+            }
+
             with get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO affiliate_links (product_name, affiliate_url, source)
-                        VALUES (%s, %s, %s)
+                        INSERT INTO affiliate_links (product_name, affiliate_url, source, metadata_json)
+                        VALUES (%s, %s, %s, %s::jsonb)
                         RETURNING id, created_at
                         """,
-                        (product_name, affiliate_url, source),
+                        (product_name, affiliate_url, source, json.dumps(manual_metadata)),
                     )
                     row = cur.fetchone()
 
