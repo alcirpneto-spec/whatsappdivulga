@@ -11,7 +11,7 @@ const { Pool } = require("pg");
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS || 15);
+const POLL_INTERVAL_SECONDS = Number(process.env.POLL_INTERVAL_SECONDS || 60);
 const MAX_LINKS_PER_CYCLE = Number(process.env.MAX_LINKS_PER_CYCLE || 10);
 const BAILEYS_GROUP_JID = process.env.BAILEYS_GROUP_JID;
 const WHATSAPP_GROUP_NAME = process.env.WHATSAPP_GROUP_NAME;
@@ -42,6 +42,108 @@ function cleanText(value, fallback = "") {
   }
 
   return String(value).replace(/\s+/g, " ").trim();
+}
+
+function normalizeMetadata(value) {
+  if (!value) {
+    return {};
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  return {};
+}
+
+function pickMeta(...candidates) {
+  for (const candidate of candidates) {
+    const value = cleanText(candidate);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function formatCommission(value) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return "";
+  }
+
+  if (/%/.test(raw)) {
+    return raw;
+  }
+
+  const numeric = Number.parseFloat(raw.replace(",", "."));
+  if (!Number.isNaN(numeric)) {
+    return `${numeric}%`;
+  }
+
+  return raw;
+}
+
+function formatDiscountPercent(value) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return "";
+  }
+
+  if (/%/.test(raw)) {
+    return raw;
+  }
+
+  const numeric = Number.parseFloat(raw.replace(",", "."));
+  if (Number.isNaN(numeric)) {
+    return "";
+  }
+
+  return `${numeric.toFixed(0)}%`;
+}
+
+function resolveOfferPricing(link, enrichment, metadata) {
+  const currentPriceNumber =
+    parsePriceNumber(enrichment.priceText) || parsePriceNumber(link.price_text);
+
+  const originalPriceRaw = pickMeta(
+    metadata.original_price,
+    metadata.price_before,
+    metadata.price_before_discount,
+    metadata.list_price,
+    metadata.old_price
+  );
+
+  const originalPriceNumber = parsePriceNumber(originalPriceRaw);
+  const originalPriceText =
+    originalPriceNumber !== null ? formatPriceFromNumber(originalPriceNumber) : "";
+
+  let discountText = formatDiscountPercent(
+    pickMeta(
+      metadata.discount_pct,
+      metadata.discount_percentage,
+      metadata.discount
+    )
+  );
+
+  if (!discountText && originalPriceNumber !== null && currentPriceNumber !== null && originalPriceNumber > currentPriceNumber) {
+    const pct = ((originalPriceNumber - currentPriceNumber) / originalPriceNumber) * 100;
+    discountText = `${pct.toFixed(0)}%`;
+  }
+
+  return {
+    originalPriceText,
+    discountText,
+  };
 }
 
 function formatPrice(value) {
@@ -557,6 +659,7 @@ async function fetchEnrichment(link) {
       priceText: normalizePriceCandidate(fromDbPrice) || formatPrice(fromDbPrice),
       imageUrl: fromDbImage,
       productName: cleanText(link.product_name),
+      metadata: {},
     };
   }
 
@@ -580,6 +683,7 @@ async function fetchEnrichment(link) {
       return {
         priceText: formatPrice(fromDbPrice),
         imageUrl: fromDbImage,
+        metadata: {},
       };
     }
 
@@ -679,6 +783,10 @@ async function fetchEnrichment(link) {
       priceText: finalPrice || formatPrice(fromDbPrice || metaPrice),
       imageUrl: cleanText(fromDbImage || primaryData?.imageUrl || featuredData?.imageUrl || metaImage),
       productName: finalProductName,
+      metadata: {
+        source,
+        resolved_url: resolvedUrl,
+      },
     };
   } catch (error) {
     logger.warn({ err: error, linkId: link.id }, "Falha ao enriquecer dados do link. Vou enviar sem imagem/preco se necessario.");
@@ -686,20 +794,24 @@ async function fetchEnrichment(link) {
       priceText: normalizePriceCandidate(fromDbPrice) || formatPrice(fromDbPrice),
       imageUrl: fromDbImage,
       productName: cleanText(link.product_name),
+      metadata: {},
     };
   }
 }
 
 async function persistEnrichment(id, enrichment) {
+  const metadata = normalizeMetadata(enrichment.metadata);
+
   await pool.query(
     `
       UPDATE affiliate_links
       SET price_text = COALESCE(NULLIF($2, ''), price_text),
           image_url = COALESCE(NULLIF($3, ''), image_url),
-          product_name = COALESCE(NULLIF($4, ''), product_name)
+          product_name = COALESCE(NULLIF($4, ''), product_name),
+          metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $5::jsonb
       WHERE id = $1
     `,
-    [id, enrichment.priceText || "", enrichment.imageUrl || "", enrichment.productName || ""]
+    [id, enrichment.priceText || "", enrichment.imageUrl || "", enrichment.productName || "", JSON.stringify(metadata)]
   );
 }
 
@@ -721,6 +833,7 @@ async function ensureSchema() {
 
     ALTER TABLE affiliate_links ADD COLUMN IF NOT EXISTS price_text TEXT;
     ALTER TABLE affiliate_links ADD COLUMN IF NOT EXISTS image_url TEXT;
+    ALTER TABLE affiliate_links ADD COLUMN IF NOT EXISTS metadata_json JSONB;
 
     CREATE INDEX IF NOT EXISTS idx_affiliate_links_pending
       ON affiliate_links (processed, created_at);
@@ -760,6 +873,7 @@ async function getPendingLinks(limit) {
   const result = await pool.query(
     `
       SELECT id, product_name, affiliate_url, source, price_text, image_url, created_at, attempts
+         , COALESCE(metadata_json, '{}'::jsonb) AS metadata_json
       FROM affiliate_links
       WHERE processed = FALSE
       ORDER BY created_at ASC
@@ -800,12 +914,28 @@ function buildMessage(link, enrichment) {
   const sourceLabel = `Fonte: ${prettySource(inferSource(link.source, link.affiliate_url))}`;
   const priceLabel = enrichment.priceText ? `Preço: ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
+  const metadata = {
+    ...normalizeMetadata(link.metadata_json),
+    ...normalizeMetadata(enrichment.metadata),
+  };
+
+  const salesValue = pickMeta(metadata.sales, metadata.sold, metadata.historical_sold);
+  const shopValue = pickMeta(metadata.shop_name, metadata.shopName, metadata.store_name);
+  const pricing = resolveOfferPricing(link, enrichment, metadata);
+  const originalPriceLabel = pricing.originalPriceText ? `De: ${pricing.originalPriceText}` : "";
+  const discountLabel = pricing.discountText ? `Desconto: ${pricing.discountText}` : "";
+  const salesLabel = salesValue ? `Vendas: ${salesValue}` : "";
+  const shopLabel = shopValue ? `Loja: ${shopValue}` : "";
 
   return [
     "Oferta feita pra você!",
     "",
     `Produto: ${productName}`,
     priceLabel,
+    originalPriceLabel,
+    discountLabel,
+    salesLabel,
+    shopLabel,
     sourceLabel,
     `Link: ${link.affiliate_url}`,
   ]

@@ -18,6 +18,7 @@ CHROME_DRIVER_PATH = os.getenv("CHROME_DRIVER_PATH", r"C:\path\to\chromedriver.e
 CHROME_BINARY_PATH = os.getenv("CHROME_BINARY_PATH", None)
 WHATSAPP_PROFILE_DIR = os.getenv("WHATSAPP_PROFILE_DIR", str(BASE_DIR / "whatsapp-profile"))
 CHECK_TIME = os.getenv("CHECK_TIME", "09:00")  # Horário diário de verificação
+SCHEDULE_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "30"))  # Intervalo da busca Shopee em minutos; <=0 usa CHECK_TIME diário
 TOP_K = int(os.getenv("TOP_K", "2"))  # Quantos produtos priorizar
 MAX_MESSAGE_ITEMS = int(os.getenv("MAX_MESSAGE_ITEMS", "3"))
 USE_WHATSAPP_AUTOMATION = os.getenv("USE_WHATSAPP_AUTOMATION", "True").lower() in ("1", "true", "yes")  # False apenas para testar sem enviar

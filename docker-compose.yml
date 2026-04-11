@@ -29,7 +29,7 @@ services:
       - DATABASE_URL=postgresql://bot:botpass@db:5432/whatsappdivulga
       - WHATSAPP_GROUP_NAME=Achadinhos Online TOP
       - BAILEYS_GROUP_JID=
-      - POLL_INTERVAL_SECONDS=15
+      - POLL_INTERVAL_SECONDS=60
       - MAX_LINKS_PER_CYCLE=10
       - LOG_LEVEL=info
     volumes:

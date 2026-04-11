@@ -1,7 +1,8 @@
 import requests
 import json
 import logging
-from datetime import datetime
+import hashlib
+import time
 from config import SHOPEE_APP_ID, SHOPEE_APP_SECRET, SHOPEE_AFFILIATE_ID
 
 
@@ -13,53 +14,89 @@ class ShopeeAffiliateAPI:
         self.base_url = "https://open-api.affiliate.shopee.com.br/graphql"
         self.session = requests.Session()
 
-    def get_access_token(self):
-        """Obtém token de acesso da API Shopee."""
-        # Implementação simplificada - na prática, seria necessário OAuth flow
-        # Este é apenas um exemplo conceitual
-        return "fake_token_for_demo"
+    def _build_authorization(self, payload_text):
+        """Monta header Authorization no formato Shopee Open API.
+
+        Assinatura: SHA256(AppId + Timestamp + Payload + Secret)
+        """
+        timestamp = str(int(time.time()))
+        sign_factor = f"{self.app_id}{timestamp}{payload_text}{self.app_secret}"
+        signature = hashlib.sha256(sign_factor.encode("utf-8")).hexdigest()
+        authorization = (
+            f"SHA256 Credential={self.app_id},"
+            f"Timestamp={timestamp},"
+            f"Signature={signature}"
+        )
+        return authorization
+
+    def _execute_graphql(self, query, variables=None):
+        payload = {"query": query}
+        if variables:
+            payload["variables"] = variables
+
+        # O payload assinado precisa ser exatamente o payload enviado.
+        payload_text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/graphql-response+json, application/json",
+            "Authorization": self._build_authorization(payload_text),
+        }
+
+        response = self.session.post(
+            self.base_url,
+            data=payload_text.encode("utf-8"),
+            headers=headers,
+            timeout=25,
+        )
+        response.raise_for_status()
+
+        try:
+            return response.json()
+        except ValueError:
+            logging.error("Resposta invalida da Shopee Open API: %s", response.text[:500])
+            return {"errors": [{"message": "Resposta JSON invalida da Shopee API"}]}
 
     def search_products(self, keyword, limit=10):
         """Busca produtos por palavra-chave."""
         query = """
-        query {
-            products(search: "%s", limit: %d) {
-                items {
-                    itemid
-                    shopid
-                    name
+        query ($keyword: String, $limit: Int, $page: Int) {
+            productOfferV2(keyword: $keyword, limit: $limit, page: $page) {
+                nodes {
+                    itemId
+                    productName
                     price
-                    image
-                    item_status
-                    historical_sold
-                    liked_count
-                    cmt_count
-                    shop_name
+                    imageUrl
+                    sales
+                    shopName
+                    productLink
+                    offerLink
+                    commissionRate
                 }
             }
         }
-        """ % (keyword, limit)
+        """
 
         try:
-            response = self.session.post(
-                self.base_url,
-                json={"query": query},
-                headers={"Authorization": f"Bearer {self.get_access_token()}"}
-            )
-            response.raise_for_status()
-            data = response.json()
+            data = self._execute_graphql(query, {"keyword": keyword, "limit": int(limit), "page": 1})
+
+            if data.get("errors"):
+                logging.error("Erro GraphQL na busca de produtos Shopee: %s", data["errors"])
+                return []
 
             products = []
-            for item in data.get("data", {}).get("products", {}).get("items", []):
+            for item in data.get("data", {}).get("productOfferV2", {}).get("nodes", []):
+                price_number = self._parse_decimal(item.get("price"))
                 products.append({
-                    "id": item["itemid"],
-                    "name": item["name"],
-                    "price": item["price"] / 100000,  # Shopee usa centavos
-                    "image": item["image"],
-                    "sold": item["historical_sold"],
-                    "rating": item.get("item_rating", {}).get("rating_star", 0),
-                    "shop_name": item["shop_name"],
-                    "url": self.generate_affiliate_link(item["itemid"], item["shopid"])
+                    "id": item.get("itemId"),
+                    "shopid": 0,
+                    "name": item.get("productName", ""),
+                    "price": price_number,
+                    "image": item.get("imageUrl", ""),
+                    "sold": item.get("sales", 0),
+                    "rating": 0,
+                    "shop_name": item.get("shopName", ""),
+                    "url": item.get("offerLink") or item.get("productLink") or "",
+                    "commission_rate": item.get("commissionRate", ""),
                 })
 
             return products
@@ -71,44 +108,44 @@ class ShopeeAffiliateAPI:
     def get_product_details(self, item_id, shop_id):
         """Obtém detalhes completos de um produto."""
         query = """
-        query {
-            item(itemid: %d, shopid: %d) {
-                itemid
-                name
-                description
+        query ($itemId: Int64) {
+            productOfferV2(itemId: $itemId, limit: 1, page: 1) {
+                nodes {
+                itemId
+                productName
                 price
-                images
-                attributes {
-                    name
-                    value
-                }
-                models {
-                    name
-                    price
+                imageUrl
+                shopName
+                productLink
+                offerLink
+                sales
+                commissionRate
                 }
             }
         }
-        """ % (item_id, shop_id)
+        """
 
         try:
-            response = self.session.post(
-                self.base_url,
-                json={"query": query},
-                headers={"Authorization": f"Bearer {self.get_access_token()}"}
-            )
-            response.raise_for_status()
-            data = response.json()
+            data = self._execute_graphql(query, {"itemId": int(item_id)})
 
-            item = data.get("data", {}).get("item", {})
+            if data.get("errors"):
+                logging.error("Erro GraphQL ao obter detalhes Shopee: %s", data["errors"])
+                return None
+
+            nodes = data.get("data", {}).get("productOfferV2", {}).get("nodes", [])
+            if not nodes:
+                return None
+
+            item = nodes[0]
             return {
-                "id": item["itemid"],
-                "name": item["name"],
-                "description": item.get("description", ""),
-                "price": item["price"] / 100000,
-                "images": item.get("images", []),
-                "attributes": item.get("attributes", []),
-                "variations": item.get("models", []),
-                "url": self.generate_affiliate_link(item["itemid"], item.get("shopid", 0))
+                "id": item.get("itemId"),
+                "name": item.get("productName", ""),
+                "description": "",
+                "price": self._parse_decimal(item.get("price")),
+                "images": [item.get("imageUrl", "")] if item.get("imageUrl") else [],
+                "attributes": [],
+                "variations": [],
+                "url": item.get("offerLink") or item.get("productLink") or "",
             }
 
         except Exception as e:
@@ -124,6 +161,22 @@ class ShopeeAffiliateAPI:
         affiliate_params = f"?affiliate_id={self.affiliate_id}&sub_id=whatsapp_bot"
 
         return base_url + affiliate_params
+
+    def _parse_decimal(self, value):
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+
+        normalized = text.replace("R$", "").replace(" ", "")
+        if "," in normalized and "." in normalized:
+            normalized = normalized.replace(".", "").replace(",", ".")
+        elif "," in normalized:
+            normalized = normalized.replace(",", ".")
+
+        try:
+            return float(normalized)
+        except ValueError:
+            return 0.0
 
     def get_trending_products(self, category_id=None, limit=10):
         """Obtém produtos em tendência."""

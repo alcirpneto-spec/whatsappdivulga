@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS affiliate_links (
     source TEXT DEFAULT 'mercado_livre',
     price_text TEXT,
     image_url TEXT,
+    metadata_json JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed BOOLEAN NOT NULL DEFAULT FALSE,
     sent_at TIMESTAMPTZ,
