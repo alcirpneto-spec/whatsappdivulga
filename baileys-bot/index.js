@@ -995,6 +995,16 @@ async function markAsFailed(id, errorMessage) {
   );
 }
 
+async function hasPendingManualLinks() {
+  const result = await pool.query(
+    `SELECT 1 FROM affiliate_links
+     WHERE processed = FALSE
+       AND lower(COALESCE(metadata_json->>'manual_priority', 'false')) IN ('true', '1', 'yes', 'on')
+     LIMIT 1`
+  );
+  return result.rows.length > 0;
+}
+
 async function getPendingLinks(limit) {
   const result = await pool.query(
     `
@@ -1984,18 +1994,25 @@ async function run() {
       }
 
       if (!isInsideActiveWindow()) {
-        const waitSeconds = secondsUntilWindowStart();
-        logger.info(
-          {
-            activeStartHour: isValidHour(ACTIVE_START_HOUR) ? ACTIVE_START_HOUR : null,
-            activeEndHour: isValidHour(ACTIVE_END_HOUR) ? ACTIVE_END_HOUR : null,
-            activeTimezone: ACTIVE_TIMEZONE,
-            waitSeconds,
-          },
-          "Fora da janela ativa de envio. Aguardando proxima janela."
-        );
-        await delay(waitSeconds * 1000);
-        continue;
+        if (await hasPendingManualLinks()) {
+          logger.info(
+            { activeStartHour: ACTIVE_START_HOUR, activeEndHour: ACTIVE_END_HOUR },
+            "Fora da janela ativa, mas ha item com manual_priority pendente. Prosseguindo."
+          );
+        } else {
+          const waitSeconds = secondsUntilWindowStart();
+          logger.info(
+            {
+              activeStartHour: isValidHour(ACTIVE_START_HOUR) ? ACTIVE_START_HOUR : null,
+              activeEndHour: isValidHour(ACTIVE_END_HOUR) ? ACTIVE_END_HOUR : null,
+              activeTimezone: ACTIVE_TIMEZONE,
+              waitSeconds,
+            },
+            "Fora da janela ativa de envio. Aguardando proxima janela."
+          );
+          await delay(waitSeconds * 1000);
+          continue;
+        }
       }
 
       if (!cachedGroupJid) {
