@@ -1807,12 +1807,11 @@ function normalizeTemplateCandidate(candidate) {
   }
 
   const headline = cleanText(candidate.headline);
-  const hook = cleanText(candidate.hook);
-  if (!headline || !hook) {
+  if (!headline) {
     return null;
   }
 
-  return { headline, hook, templateSource: "ai" };
+  return { headline, templateSource: "ai" };
 }
 
 async function generateKeywordTemplatesWithAI(keyword, groupKey) {
@@ -1825,11 +1824,10 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
     `Keyword: ${keyword}`,
     `Grupo: ${groupKey}`,
     "Retorne SOMENTE JSON valido no formato:",
-    '{"templates":[{"headline":"...","hook":"..."},{"headline":"...","hook":"..."},{"headline":"...","hook":"..."}] }',
+    '{"templates":[{"headline":"..."},{"headline":"..."},{"headline":"..."}] }',
     "Regras:",
     "- Exatamente 3 templates.",
     "- Headline: texto curto com 1 emoji no inicio e a parte mais impactante entre asteriscos para negrito no WhatsApp. Exemplo: '🎧 *Audio sem fio com preco de achado*'",
-    "- Hook: 1 frase destacando o beneficio real. Voce pode colocar 1 palavra ou expressao chave entre asteriscos para negrito. Exemplo: 'Experiente a *liberdade* do audio sem fio.'",
     "- Use portugues do Brasil com acentuacao correta e ortografia impecavel.",
     "- Escreva no tom de um vendedor de alta performance, focado em converter.",
     "- Nao use titulos genericos como 'Produto que surpreende' ou 'Novidade incrivel'.",
@@ -1851,12 +1849,12 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
       body: JSON.stringify({
         model: AI_COPY_MODEL,
         temperature: 0.9,
-        max_tokens: 350,
+        max_tokens: 150,
         messages: [
           {
             role: "system",
             content:
-              "Voce escreve copy comercial em portugues do Brasil para WhatsApp. Use acentuacao correta, linguagem natural e tom persuasivo de vendedor top. Use *asteriscos* para negrito no WhatsApp: coloque o trecho mais impactante do headline entre asteriscos, e destaque 1 palavra chave no hook. Nunca use titulos genericos ou promessas falsas.",
+              "Voce escreve copy comercial em portugues do Brasil para WhatsApp. Use acentuacao correta, linguagem natural e tom persuasivo de vendedor top. Use *asteriscos* para negrito no WhatsApp: coloque o trecho mais impactante do headline entre asteriscos. Nunca use titulos genericos ou promessas falsas.",
           },
           {
             role: "user",
@@ -2000,8 +1998,6 @@ async function buildMessage(link, enrichment) {
     ...normalizeMetadata(enrichment.metadata),
   };
 
-  const salesValue = pickMeta(metadata.sales, metadata.sold, metadata.historical_sold);
-  const shopValue = pickMeta(metadata.shop_name, metadata.shopName, metadata.store_name);
   const pricing = resolveOfferPricing(link, enrichment, metadata);
 
   const hasBothPrices = !!(pricing.originalPriceText && enrichment.priceText);
@@ -2009,12 +2005,8 @@ async function buildMessage(link, enrichment) {
   const priceLabel = enrichment.priceText
     ? hasBothPrices
       ? `💰 *Por:* ${enrichment.priceText}`
-      : `💰 *Preço:* ${enrichment.priceText}`
+      : `💰 *Por:* ${enrichment.priceText}`
     : "";
-  const discountLabel = pricing.discountText ? `🎯 *Desconto:* ${pricing.discountText}` : "";
-  const salesCount = parseSalesCount(salesValue);
-  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `🔥 *Vendas:* ${salesValue}` : "";
-  const shopLabel = shopValue ? `🏬 *Loja:* ${shopValue}` : "";
   const productLabel = `📦 *Produto:* ${productName}`;
   const linkLabel = `🛒 *Compre aqui:* ${link.affiliate_url}`;
 
@@ -2029,18 +2021,14 @@ async function buildMessage(link, enrichment) {
   } else {
     selectedTemplate = await pickTemplateForGroup(groupKey, productName);
   }
-  const hookLine = cleanText(selectedTemplate.hook);
 
-  const priceBlock = [originalPriceLabel, priceLabel, discountLabel].filter(Boolean).join("\n");
-  const detailsBlock = [salesLabel, shopLabel].filter(Boolean).join("\n");
+  const priceBlock = [originalPriceLabel, priceLabel].filter(Boolean).join("\n");
 
   const text = [
     selectedTemplate.headline.toUpperCase(),
-    hookLine,
     "",
     productLabel,
     priceBlock,
-    detailsBlock,
     linkLabel,
   ]
     .filter(Boolean)
