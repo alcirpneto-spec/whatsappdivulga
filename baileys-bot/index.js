@@ -1713,6 +1713,8 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
     "Regras:",
     "- Exatamente 3 templates.",
     "- Headlines curtas e chamativas (com 1 emoji, sem exagero).",
+    "- Use portugues do Brasil com acentuacao correta e ortografia impecavel.",
+    "- Escreva no tom de um vendedor de alta performance, focado em converter.",
     "- Hook focado em beneficio real do produto.",
     "- Nao inventar desconto, urgencia falsa, nem promessas irreais.",
     "- Texto natural para grupo grande de WhatsApp.",
@@ -1736,7 +1738,8 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
         messages: [
           {
             role: "system",
-            content: "Voce escreve copy comercial em portugues do Brasil para WhatsApp, clara e persuasiva.",
+            content:
+              "Voce escreve copy comercial em portugues do Brasil para WhatsApp. Sempre use acentuacao correta, linguagem natural e tom altamente persuasivo de vendedor top de performance, sem promessas falsas.",
           },
           {
             role: "user",
