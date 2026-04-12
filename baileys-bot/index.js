@@ -2000,15 +2000,16 @@ async function buildMessage(link, enrichment) {
 
   const pricing = resolveOfferPricing(link, enrichment, metadata);
 
-  const hasBothPrices = !!(pricing.originalPriceText && enrichment.priceText);
-  const originalPriceLabel = hasBothPrices ? `💸 De: ~${pricing.originalPriceText}~` : "";
-  const priceLabel = enrichment.priceText
+  const currentPrice = cleanText(enrichment.priceText).replace(/\u00A0/g, " ");
+  const previousPrice = cleanText(pricing.originalPriceText).replace(/\u00A0/g, " ");
+  const hasBothPrices = !!(currentPrice && previousPrice);
+  const priceLabel = currentPrice
     ? hasBothPrices
-      ? `💰 *Por:* ${enrichment.priceText}`
-      : `💰 *Por:* ${enrichment.priceText}`
+      ? `💰 Preço: ${currentPrice} (de ${previousPrice})`
+      : `💰 Preço: ${currentPrice}`
     : "";
-  const productLabel = `📦 *Produto:* ${productName}`;
-  const linkLabel = `🛒 *Compre aqui:* ${link.affiliate_url}`;
+  const productLabel = `📦 Produto: ${productName}`;
+  const linkLabel = `🛒 Compre aqui: ${link.affiliate_url}`;
 
   const groupKey = resolveProductGroupKey(productName, metadata);
   const matchedKeyword = resolveMatchedKeyword(productName);
@@ -2022,13 +2023,16 @@ async function buildMessage(link, enrichment) {
     selectedTemplate = await pickTemplateForGroup(groupKey, productName);
   }
 
-  const priceBlock = [originalPriceLabel, priceLabel].filter(Boolean).join("\n");
+  const title = cleanText(selectedTemplate.headline)
+    .split(/\r?\n/)[0]
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
   const text = [
-    selectedTemplate.headline.toUpperCase(),
+    title,
     "",
     productLabel,
-    priceBlock,
+    priceLabel,
     linkLabel,
   ]
     .filter(Boolean)
