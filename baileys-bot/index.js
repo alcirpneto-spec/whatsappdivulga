@@ -1074,6 +1074,32 @@ function normalizeForMatch(value) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function matchesKeywordTerm(text, keyword) {
+  const normalizedText = normalizeForMatch(text);
+  const normalizedKeyword = normalizeForMatch(keyword);
+
+  if (!normalizedText || !normalizedKeyword) {
+    return false;
+  }
+
+  const keywordPattern = normalizedKeyword
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => escapeRegex(part))
+    .join("\\s+");
+
+  if (!keywordPattern) {
+    return false;
+  }
+
+  const regex = new RegExp(`(^|[^a-z0-9])${keywordPattern}([^a-z0-9]|$)`);
+  return regex.test(normalizedText);
+}
+
 const MESSAGE_TEMPLATE_GROUPS = {
   moda_feminina: {
     keywords: [
@@ -1542,7 +1568,7 @@ function resolveProductGroupKey(productName, metadata) {
       continue;
     }
 
-    if (groupConfig.keywords.some((keyword) => normalizedName.includes(normalizeForMatch(keyword)))) {
+    if (groupConfig.keywords.some((keyword) => matchesKeywordTerm(normalizedName, keyword))) {
       return groupKey;
     }
   }
@@ -1565,7 +1591,7 @@ function resolveMatchedKeyword(productName) {
 
     const sortedKeywords = [...groupConfig.keywords].sort((a, b) => b.length - a.length);
     for (const keyword of sortedKeywords) {
-      if (normalizedName.includes(normalizeForMatch(keyword))) {
+      if (matchesKeywordTerm(normalizedName, keyword)) {
         return keyword;
       }
     }
@@ -1706,7 +1732,7 @@ function normalizeTemplateCandidate(candidate) {
     return null;
   }
 
-  return { headline, hook };
+  return { headline, hook, templateSource: "ai" };
 }
 
 async function generateKeywordTemplatesWithAI(keyword, groupKey) {
@@ -1796,7 +1822,10 @@ async function getKeywordTemplates(keyword, groupKey) {
   }
 
   const aiTemplates = await generateKeywordTemplatesWithAI(keyword, groupKey);
-  const templates = aiTemplates || buildKeywordTemplates(keyword, groupKey);
+  const templates = (aiTemplates || buildKeywordTemplates(keyword, groupKey)).map((template) => ({
+    ...template,
+    templateSource: template.templateSource || (aiTemplates ? "ai" : "local"),
+  }));
 
   aiKeywordTemplateCache.set(keywordKey, templates);
   return templates;
@@ -1836,14 +1865,17 @@ function pickTemplateForGroup(groupKey) {
   const selectedIndex = randomPool[Math.floor(Math.random() * randomPool.length)];
   lastTemplateIndexByGroup.set(groupKey, selectedIndex);
 
-  return templates[selectedIndex];
+  return {
+    ...templates[selectedIndex],
+    templateSource: templates[selectedIndex].templateSource || "local",
+  };
 }
 
 function resolveNeutralTopicConfig(productName) {
   const normalizedName = normalizeForMatch(productName);
 
   for (const rule of NEUTRAL_TOPIC_RULES) {
-    const matched = rule.keywords.some((keyword) => normalizedName.includes(normalizeForMatch(keyword)));
+    const matched = rule.keywords.some((keyword) => matchesKeywordTerm(normalizedName, keyword));
     if (matched) {
       return rule;
     }
@@ -1867,7 +1899,10 @@ function pickTemplateForNeutralTopic(productName) {
   const selectedIndex = randomPool[Math.floor(Math.random() * randomPool.length)];
   lastTemplateIndexByGroup.set(memoryKey, selectedIndex);
 
-  return templates[selectedIndex];
+  return {
+    ...templates[selectedIndex],
+    templateSource: templates[selectedIndex].templateSource || "local",
+  };
 }
 
 async function buildMessage(link, enrichment) {
@@ -1911,7 +1946,7 @@ async function buildMessage(link, enrichment) {
   const priceBlock = [originalPriceLabel, priceLabel, discountLabel].filter(Boolean).join("\n");
   const detailsBlock = [salesLabel, shopLabel].filter(Boolean).join("\n");
 
-  return [
+  const text = [
     selectedTemplate.headline.toUpperCase(),
     hookLine,
     "",
@@ -1922,6 +1957,12 @@ async function buildMessage(link, enrichment) {
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  return {
+    text,
+    templateSource: selectedTemplate.templateSource || "local",
+    templateHeadline: cleanText(selectedTemplate.headline),
+  };
 }
 
 async function startBaileysConnection() {
@@ -2081,7 +2122,8 @@ async function run() {
         const enrichment = await fetchEnrichment(link);
         await persistEnrichment(link.id, enrichment);
 
-        const message = await buildMessage(link, enrichment);
+        const messageResult = await buildMessage(link, enrichment);
+        const message = messageResult.text;
 
         if (enrichment.imageUrl) {
           try {
@@ -2102,6 +2144,8 @@ async function run() {
         logger.info(
           {
             linkId: link.id,
+            templateSource: messageResult.templateSource,
+            templateHeadline: messageResult.templateHeadline,
             sentInWindow,
             maxLinksPerWindow: MAX_LINKS_PER_CYCLE,
             nextSendInSeconds: SEND_INTERVAL_SECONDS,
