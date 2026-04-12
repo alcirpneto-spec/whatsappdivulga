@@ -1428,7 +1428,17 @@ async function run() {
         logger.error({ err: error, linkId: link.id }, "Falha ao enviar link.");
       }
 
-      await delay(SEND_INTERVAL_SECONDS * 1000);
+      const nextBatch = await getPendingLinks(1);
+      const nextIsManual =
+        nextBatch.length > 0 &&
+        normalizeMetadata(nextBatch[0].metadata_json).manual_priority === true;
+
+      if (nextIsManual) {
+        logger.info({ linkId: nextBatch[0].id }, "Proximo item e manual_priority. Pulando intervalo de envio.");
+        await delay(3000);
+      } else {
+        await delay(SEND_INTERVAL_SECONDS * 1000);
+      }
     }
 
     const waitMs = connection.reconnectDelayMs();
