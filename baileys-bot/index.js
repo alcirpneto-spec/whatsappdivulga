@@ -1894,15 +1894,17 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
   }
 }
 
-async function getKeywordTemplates(keyword, groupKey) {
-  const keywordKey = normalizeKeywordKey(keyword);
+async function getKeywordTemplates(keyword, groupKey, options = {}) {
+  const { cachePrefix = "keyword", fallbackFactory = null } = options;
+  const keywordKey = `${cachePrefix}:${normalizeKeywordKey(keyword)}`;
 
   if (aiKeywordTemplateCache.has(keywordKey)) {
     return aiKeywordTemplateCache.get(keywordKey);
   }
 
   const aiTemplates = await generateKeywordTemplatesWithAI(keyword, groupKey);
-  const templates = (aiTemplates || buildKeywordTemplates(keyword, groupKey)).map((template) => ({
+  const fallbackTemplates = fallbackFactory ? fallbackFactory() : buildKeywordTemplates(keyword, groupKey);
+  const templates = (aiTemplates || fallbackTemplates).map((template) => ({
     ...template,
     templateSource: template.templateSource || (aiTemplates ? "ai" : "local"),
   }));
@@ -1928,9 +1930,12 @@ async function pickTemplateForKeyword(keyword, groupKey) {
   return templates[selectedIndex];
 }
 
-function pickTemplateForGroup(groupKey) {
+async function pickTemplateForGroup(groupKey, productName) {
   const groupConfig = MESSAGE_TEMPLATE_GROUPS[groupKey] || MESSAGE_TEMPLATE_GROUPS.neutro;
-  const templates = groupConfig.templates;
+  const templates = await getKeywordTemplates(productName, groupKey, {
+    cachePrefix: `group_${groupKey}`,
+    fallbackFactory: () => groupConfig.templates,
+  });
 
   if (!Array.isArray(templates) || templates.length === 0) {
     return MESSAGE_TEMPLATE_GROUPS.neutro.templates[0];
@@ -1964,10 +1969,13 @@ function resolveNeutralTopicConfig(productName) {
   return null;
 }
 
-function pickTemplateForNeutralTopic(productName) {
+async function pickTemplateForNeutralTopic(productName) {
   const topicConfig = resolveNeutralTopicConfig(productName);
-  const templates = topicConfig?.templates || MESSAGE_TEMPLATE_GROUPS.neutro.templates;
   const topicKey = topicConfig?.topic || "geral";
+  const templates = await getKeywordTemplates(productName, topicKey, {
+    cachePrefix: `neutral_${topicKey}`,
+    fallbackFactory: () => topicConfig?.templates || MESSAGE_TEMPLATE_GROUPS.neutro.templates,
+  });
   const memoryKey = `neutro_${topicKey}`;
 
   const previousIndex = lastTemplateIndexByGroup.get(memoryKey);
@@ -2017,9 +2025,9 @@ async function buildMessage(link, enrichment) {
   if (matchedKeyword) {
     selectedTemplate = await pickTemplateForKeyword(matchedKeyword, groupKey);
   } else if (groupKey === "neutro") {
-    selectedTemplate = pickTemplateForNeutralTopic(productName);
+    selectedTemplate = await pickTemplateForNeutralTopic(productName);
   } else {
-    selectedTemplate = pickTemplateForGroup(groupKey);
+    selectedTemplate = await pickTemplateForGroup(groupKey, productName);
   }
   const hookLine = cleanText(selectedTemplate.hook);
 
