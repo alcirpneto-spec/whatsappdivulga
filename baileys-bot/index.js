@@ -1871,7 +1871,6 @@ function pickTemplateForNeutralTopic(productName) {
 }
 
 async function buildMessage(link, enrichment) {
-  const sourceLabel = `*Fonte:* ${prettySource(inferSource(link.source, link.affiliate_url))}`;
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
   const metadata = {
     ...normalizeMetadata(link.metadata_json),
@@ -1883,16 +1882,18 @@ async function buildMessage(link, enrichment) {
   const pricing = resolveOfferPricing(link, enrichment, metadata);
 
   const hasBothPrices = !!(pricing.originalPriceText && enrichment.priceText);
-  const originalPriceLabel = hasBothPrices ? `~${pricing.originalPriceText}~` : "";
+  const originalPriceLabel = hasBothPrices ? `💸 De: ~${pricing.originalPriceText}~` : "";
   const priceLabel = enrichment.priceText
     ? hasBothPrices
-      ? `*🔥 Por: ${enrichment.priceText}*`
-      : `*Preço:* ${enrichment.priceText}`
+      ? `💰 *Por:* ${enrichment.priceText}`
+      : `💰 *Preço:* ${enrichment.priceText}`
     : "";
-  const discountLabel = pricing.discountText ? `*Desconto:* ${pricing.discountText}` : "";
+  const discountLabel = pricing.discountText ? `🎯 *Desconto:* ${pricing.discountText}` : "";
   const salesCount = parseSalesCount(salesValue);
-  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `*Vendas:* ${salesValue}` : "";
-  const shopLabel = shopValue ? `*Loja:* ${shopValue}` : "";
+  const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `🔥 *Vendas:* ${salesValue}` : "";
+  const shopLabel = shopValue ? `🏬 *Loja:* ${shopValue}` : "";
+  const productLabel = `📦 *Produto:* ${productName}`;
+  const linkLabel = `🛒 *Compre aqui:* ${link.affiliate_url}`;
 
   const groupKey = resolveProductGroupKey(productName, metadata);
   const matchedKeyword = resolveMatchedKeyword(productName);
@@ -1907,21 +1908,20 @@ async function buildMessage(link, enrichment) {
   }
   const hookLine = cleanText(selectedTemplate.hook);
 
+  const priceBlock = [originalPriceLabel, priceLabel, discountLabel].filter(Boolean).join("\n");
+  const detailsBlock = [salesLabel, shopLabel].filter(Boolean).join("\n");
+
   return [
     selectedTemplate.headline.toUpperCase(),
     hookLine,
     "",
-    `*Produto:* ${productName}`,
-    originalPriceLabel,
-    priceLabel,
-    discountLabel,
-    salesLabel,
-    shopLabel,
-    sourceLabel,
-    `Link: ${link.affiliate_url}`,
+    productLabel,
+    priceBlock,
+    detailsBlock,
+    linkLabel,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 }
 
 async function startBaileysConnection() {
