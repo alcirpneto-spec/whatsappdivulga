@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login Admin | WhatsApp Divulga</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <main class="app-shell" style="max-width: 560px; margin-top: 10vh;">
+      <header class="hero">
+        <p class="eyebrow">acesso restrito</p>
+        <h1>Login Admin</h1>
+        <p class="subtitle">Entre com seu usuario e senha para acessar o painel.</p>
+      </header>
+
+      <section class="panel">
+        <form id="login-form" class="form-grid" novalidate>
+          <label class="field field-wide">
+            <span>Usuario</span>
+            <input id="username" name="username" type="text" autocomplete="username" required />
+          </label>
+
+          <label class="field field-wide">
+            <span>Senha</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+
+          <div class="actions">
+            <button id="submit-btn" type="submit">Entrar</button>
+          </div>
+        </form>
+
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('login-form');
+      const submitBtn = document.getElementById('submit-btn');
+      const statusEl = document.getElementById('status');
+
+      function setStatus(message, kind = 'info') {
+        statusEl.textContent = message;
+        statusEl.dataset.kind = kind;
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submitBtn.disabled = true;
+        setStatus('Validando acesso...', 'info');
+
+        try {
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: document.getElementById('username').value.trim(),
+              password: document.getElementById('password').value,
+            }),
+          });
+
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setStatus(data.message || 'Falha no login.', 'error');
+            submitBtn.disabled = false;
+            return;
+          }
+
+          window.location.href = '/';
+        } catch (error) {
+          setStatus('Erro de rede ao autenticar.', 'error');
+          submitBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

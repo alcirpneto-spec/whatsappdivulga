@@ -1,10 +1,12 @@
 import json
 import os
+from functools import wraps
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import psycopg2
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 def create_app() -> Flask:
@@ -30,6 +32,15 @@ def create_app() -> Flask:
             return int(value.strip())
         except ValueError:
             return default
+
+    app.secret_key = (os.getenv("WEB_SESSION_SECRET") or "").strip()
+    if not app.secret_key:
+        raise RuntimeError("WEB_SESSION_SECRET nao configurada")
+
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = get_env_bool("WEB_SESSION_COOKIE_SECURE", False)
+    app.permanent_session_lifetime = timedelta(hours=max(1, get_env_int("WEB_SESSION_HOURS", 12)))
 
     def detect_source(url: str) -> str:
         host = (urlparse(url).netloc or "").lower()
@@ -69,7 +80,72 @@ def create_app() -> Flask:
                     """
                 )
 
+    def ensure_admin_users_table():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_users (
+                        id BIGSERIAL PRIMARY KEY,
+                        username TEXT NOT NULL UNIQUE,
+                        password_hash TEXT NOT NULL,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        last_login_at TIMESTAMPTZ
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_admin_users_username_lower
+                        ON admin_users ((lower(username)))
+                    """
+                )
+
+    def ensure_default_admin_user():
+        default_username = (os.getenv("ADMIN_USERNAME") or "").strip()
+        default_password = (os.getenv("ADMIN_PASSWORD") or "").strip()
+
+        if not default_username or not default_password:
+            return
+
+        password_hash = generate_password_hash(default_password)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO admin_users (username, password_hash, is_active)
+                    VALUES (%s, %s, TRUE)
+                    ON CONFLICT (username)
+                    DO UPDATE SET
+                        password_hash = EXCLUDED.password_hash,
+                        is_active = TRUE
+                    """,
+                    (default_username, password_hash),
+                )
+
+    def is_authenticated() -> bool:
+        return bool(session.get("admin_user_id"))
+
+    def login_required(api: bool = False):
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                if is_authenticated():
+                    return func(*args, **kwargs)
+
+                if api:
+                    return jsonify({"ok": False, "message": "Nao autenticado."}), 401
+
+                return redirect(url_for("login_page"))
+
+            return wrapper
+
+        return decorator
+
     ensure_worker_runs_table()
+    ensure_admin_users_table()
+    ensure_default_admin_user()
 
     @app.get("/health")
     def health():
@@ -83,10 +159,70 @@ def create_app() -> Flask:
             return jsonify({"status": "error", "message": str(exc)}), 500
 
     @app.get("/")
+    @login_required(api=False)
     def index():
         return render_template("index.html")
 
+    @app.get("/login")
+    def login_page():
+        if is_authenticated():
+            return redirect(url_for("index"))
+        return render_template("login.html")
+
+    @app.post("/api/auth/login")
+    def login_action():
+        payload = request.get_json(silent=True) or {}
+        username = (payload.get("username") or "").strip()
+        password = (payload.get("password") or "").strip()
+
+        if not username or not password:
+            return jsonify({"ok": False, "message": "Informe usuario e senha."}), 400
+
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, username, password_hash, is_active
+                        FROM admin_users
+                        WHERE lower(username) = lower(%s)
+                        LIMIT 1
+                        """,
+                        (username,),
+                    )
+                    row = cur.fetchone()
+
+                    if not row:
+                        return jsonify({"ok": False, "message": "Credenciais invalidas."}), 401
+
+                    user_id, db_username, password_hash, is_active = row
+                    if not is_active or not check_password_hash(password_hash, password):
+                        return jsonify({"ok": False, "message": "Credenciais invalidas."}), 401
+
+                    cur.execute(
+                        """
+                        UPDATE admin_users
+                        SET last_login_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (user_id,),
+                    )
+
+            session.permanent = True
+            session["admin_user_id"] = user_id
+            session["admin_username"] = db_username
+            return jsonify({"ok": True}), 200
+        except Exception as exc:
+            return jsonify({"ok": False, "message": f"Erro no login: {exc}"}), 500
+
+    @app.post("/api/auth/logout")
+    @login_required(api=True)
+    def logout_action():
+        session.clear()
+        return jsonify({"ok": True}), 200
+
     @app.get("/api/recent")
+    @login_required(api=True)
     def list_recent_links():
         limit = 8
         try:
@@ -118,6 +254,7 @@ def create_app() -> Flask:
             return jsonify({"items": [], "message": str(exc)}), 500
 
     @app.post("/api/affiliate-links")
+    @login_required(api=True)
     def create_affiliate_link():
         payload = request.get_json(silent=True) or {}
         product_name = (payload.get("product_name") or "").strip()
@@ -176,6 +313,7 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "message": f"Erro ao salvar: {exc}"}), 500
 
     @app.get("/api/dashboard")
+    @login_required(api=True)
     def dashboard_status():
         try:
             use_shopee_api = get_env_bool("USE_SHOPEE_API", True)

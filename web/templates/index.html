@@ -21,6 +21,7 @@
         <p class="eyebrow">whatsapp divulga</p>
         <h1>Cadastro de Ofertas</h1>
         <p class="subtitle">Cadastre links em segundos e deixe o worker enviar automaticamente.</p>
+        <button id="logout-btn" type="button" class="ghost">Sair</button>
       </header>
 
       <section class="panel">
@@ -97,6 +98,7 @@
       const submitBtn = document.getElementById('submit-btn');
       const refreshBtn = document.getElementById('refresh-btn');
       const refreshMonitorBtn = document.getElementById('refresh-monitor-btn');
+      const logoutBtn = document.getElementById('logout-btn');
       const recentList = document.getElementById('recent-list');
       const shopeeCountdownEl = document.getElementById('shopee-countdown');
       const shopeeMetaEl = document.getElementById('shopee-meta');
@@ -109,6 +111,23 @@
       function setStatus(message, kind = 'info') {
         statusEl.textContent = message;
         statusEl.dataset.kind = kind;
+      }
+
+      async function fetchJson(url, options = {}) {
+        const response = await fetch(url, options);
+        if (response.status === 401) {
+          window.location.href = '/login';
+          throw new Error('Nao autenticado');
+        }
+
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (error) {
+          data = {};
+        }
+
+        return { response, data };
       }
 
       function formatDate(isoDate) {
@@ -198,8 +217,7 @@
 
       async function loadMonitor() {
         try {
-          const response = await fetch('/api/dashboard');
-          const data = await response.json();
+          const { response, data } = await fetchJson('/api/dashboard');
           if (!response.ok) {
             throw new Error(data.message || 'Falha ao carregar monitor.');
           }
@@ -213,8 +231,7 @@
 
       async function loadRecent() {
         try {
-          const response = await fetch('/api/recent');
-          const data = await response.json();
+          const { data } = await fetchJson('/api/recent');
           renderRecent(data.items || []);
         } catch (error) {
           recentList.innerHTML = '<p class="empty">Erro ao carregar lista recente.</p>';
@@ -233,13 +250,11 @@
         };
 
         try {
-          const response = await fetch('/api/affiliate-links', {
+          const { response, data } = await fetchJson('/api/affiliate-links', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
           });
-
-          const data = await response.json();
           if (!response.ok || !data.ok) {
             setStatus(data.message || 'Falha ao cadastrar link.', 'error');
             return;
@@ -257,6 +272,14 @@
 
       refreshBtn.addEventListener('click', loadRecent);
       refreshMonitorBtn.addEventListener('click', loadMonitor);
+      logoutBtn.addEventListener('click', async () => {
+        try {
+          await fetchJson('/api/auth/logout', { method: 'POST' });
+        } catch (error) {
+          // Ignore network errors here and force redirect anyway.
+        }
+        window.location.href = '/login';
+      });
 
       loadRecent();
       loadMonitor();
