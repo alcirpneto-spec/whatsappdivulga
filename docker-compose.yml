@@ -42,8 +42,8 @@ services:
       - AI_COPY_MODEL=${AI_COPY_MODEL:-gpt-4o-mini}
       - AI_COPY_API_URL=${AI_COPY_API_URL:-https://api.openai.com/v1/chat/completions}
       - AI_COPY_TIMEOUT_MS=${AI_COPY_TIMEOUT_MS:-12000}
-      - ACTIVE_START_HOUR=${ACTIVE_START_HOUR:-}
-      - ACTIVE_END_HOUR=${ACTIVE_END_HOUR:-}
+      - ACTIVE_START_HOUR=${ACTIVE_START_HOUR:-8}
+      - ACTIVE_END_HOUR=${ACTIVE_END_HOUR:-23}
       - ACTIVE_TIMEZONE=${ACTIVE_TIMEZONE:-America/Sao_Paulo}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:

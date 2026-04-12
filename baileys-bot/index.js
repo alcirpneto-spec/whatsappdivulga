@@ -27,11 +27,11 @@ const AI_COPY_MODEL = String(process.env.AI_COPY_MODEL || "gpt-4o-mini").trim();
 const AI_COPY_API_URL = String(process.env.AI_COPY_API_URL || "https://api.openai.com/v1/chat/completions").trim();
 const AI_COPY_TIMEOUT_MS = Number(process.env.AI_COPY_TIMEOUT_MS || 12000);
 const ACTIVE_START_HOUR = Number.parseInt(
-  String(process.env.ACTIVE_START_HOUR || "").trim(),
+  String(process.env.ACTIVE_START_HOUR || "8").trim(),
   10
 );
 const ACTIVE_END_HOUR = Number.parseInt(
-  String(process.env.ACTIVE_END_HOUR || "").trim(),
+  String(process.env.ACTIVE_END_HOUR || "23").trim(),
   10
 );
 const ACTIVE_TIMEZONE = String(process.env.ACTIVE_TIMEZONE || "America/Sao_Paulo").trim();
