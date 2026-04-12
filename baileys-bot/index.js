@@ -977,7 +977,12 @@ const MESSAGE_TEMPLATE_GROUPS = {
     keywords: [
       "legging",
       "leg",
+      "short feminino",
+      "shorts feminino",
       "pantalona",
+      "saia",
+      "vestido",
+      "blusa feminina",
       "alfaiataria feminina",
       "jogger feminina",
       "calca feminina",
@@ -1113,6 +1118,8 @@ const MESSAGE_TEMPLATE_GROUPS = {
       "anti-idade",
       "massageador",
       "perfume",
+      "attraction",
+      "hidratante",
       "botox",
       "hyaluron",
       "beleza",
@@ -1150,14 +1157,62 @@ const MESSAGE_TEMPLATE_GROUPS = {
   neutro: {
     keywords: [],
     templates: [
-      { headline: "🔥 *Oferta selecionada pra voce*", hook: "Produto em destaque com bom custo-beneficio." },
-      { headline: "✨ *Achadinho do dia para conferir*", hook: "Oportunidade para aproveitar agora." },
-      { headline: "🛒 *Produto em evidencia hoje*", hook: "Vale dar uma olhada nesse item." },
-      { headline: "⚡ *Oferta do momento*", hook: "Achado com valor interessante para seu dia a dia." },
-      { headline: "📌 *Destaque especial de hoje*", hook: "Produto recomendado para conferir no link." },
+      { headline: "🔥 *Achado do dia para economizar*", hook: "Oferta atual com bom custo-beneficio." },
+      { headline: "✨ *Oferta em destaque agora*", hook: "Item interessante para conferir no link." },
+      { headline: "🛒 *Preco bom em produto util*", hook: "Selecionado para quem gosta de oportunidade." },
+      { headline: "⚡ *Oferta com valor competitivo*", hook: "Vale verificar enquanto esta disponivel." },
+      { headline: "📌 *Dica de compra do momento*", hook: "Opcao com preco atrativo para hoje." },
     ],
   },
 };
+
+const NEUTRAL_TOPIC_RULES = [
+  {
+    topic: "moda",
+    keywords: ["short", "shorts", "calca", "camisa", "camiseta", "blusa", "saia", "vestido", "legging", "bermuda", "polo", "jogger"],
+    templates: [
+      { headline: "🛍️ *Achado de moda com preco baixo*", hook: "Peca em destaque para renovar o guarda-roupa." },
+      { headline: "✨ *Oferta de moda para aproveitar*", hook: "Item versatil com valor interessante hoje." },
+      { headline: "🔥 *Moda em promocao no momento*", hook: "Boa oportunidade para comprar pagando menos." },
+    ],
+  },
+  {
+    topic: "beleza",
+    keywords: ["perfume", "body splash", "hidratante", "cabelo", "mascara", "massageador", "botox", "hyaluron", "serum"],
+    templates: [
+      { headline: "💄 *Oferta de beleza em destaque*", hook: "Produto de cuidados com preco atrativo." },
+      { headline: "🌸 *Achadinho de autocuidado hoje*", hook: "Item de beleza com custo-beneficio interessante." },
+      { headline: "✨ *Preco bom para cuidar de voce*", hook: "Vale conferir essa oportunidade de beleza." },
+    ],
+  },
+  {
+    topic: "casa",
+    keywords: ["cozinha", "panela", "marmita", "pote", "toalha", "lencol", "travesseiro", "utensilio", "escorredor", "torneira"],
+    templates: [
+      { headline: "🏠 *Utilidade para casa com preco bom*", hook: "Produto pratico para facilitar a rotina." },
+      { headline: "🧺 *Oferta para o dia a dia da casa*", hook: "Item funcional com valor competitivo." },
+      { headline: "🍳 *Achado util para sua rotina*", hook: "Boa opcao para organizar e simplificar tarefas." },
+    ],
+  },
+  {
+    topic: "tecnologia",
+    keywords: ["fone", "bluetooth", "tws", "caixa de som", "earbud", "carregador", "smart", "gadget"],
+    templates: [
+      { headline: "🎧 *Oferta de tecnologia em destaque*", hook: "Produto pratico com preco interessante hoje." },
+      { headline: "⚡ *Achado tech com bom valor*", hook: "Boa oportunidade para quem curte tecnologia." },
+      { headline: "🔊 *Item de audio e tech para conferir*", hook: "Custo-beneficio atrativo no momento." },
+    ],
+  },
+  {
+    topic: "saude_fitness",
+    keywords: ["creatina", "fitness", "treino", "academia", "suplement", "fisioterapia", "bioimpedancia"],
+    templates: [
+      { headline: "💪 *Oferta fitness com preco competitivo*", hook: "Item em destaque para sua rotina de treino." },
+      { headline: "🏋️ *Achado esportivo do momento*", hook: "Produto util para quem busca performance." },
+      { headline: "🚀 *Preco bom para evoluir no treino*", hook: "Vale conferir essa opcao fitness." },
+    ],
+  },
+];
 
 const CATEGORY_GROUP_HINTS = {
   100017: "moda_feminina",
@@ -1221,9 +1276,40 @@ function pickTemplateForGroup(groupKey) {
   return templates[selectedIndex];
 }
 
+function resolveNeutralTopicConfig(productName) {
+  const normalizedName = normalizeForMatch(productName);
+
+  for (const rule of NEUTRAL_TOPIC_RULES) {
+    const matched = rule.keywords.some((keyword) => normalizedName.includes(normalizeForMatch(keyword)));
+    if (matched) {
+      return rule;
+    }
+  }
+
+  return null;
+}
+
+function pickTemplateForNeutralTopic(productName) {
+  const topicConfig = resolveNeutralTopicConfig(productName);
+  const templates = topicConfig?.templates || MESSAGE_TEMPLATE_GROUPS.neutro.templates;
+  const topicKey = topicConfig?.topic || "geral";
+  const memoryKey = `neutro_${topicKey}`;
+
+  const previousIndex = lastTemplateIndexByGroup.get(memoryKey);
+  const candidateIndexes = templates
+    .map((_, index) => index)
+    .filter((index) => index !== previousIndex);
+
+  const randomPool = candidateIndexes.length > 0 ? candidateIndexes : [0];
+  const selectedIndex = randomPool[Math.floor(Math.random() * randomPool.length)];
+  lastTemplateIndexByGroup.set(memoryKey, selectedIndex);
+
+  return templates[selectedIndex];
+}
+
 function buildMessage(link, enrichment) {
   const sourceLabel = `*Fonte:* ${prettySource(inferSource(link.source, link.affiliate_url))}`;
-  const priceLabel = enrichment.priceText ? `*Preco:* ${enrichment.priceText}` : "";
+  const priceLabel = enrichment.priceText ? `*Preço:* ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
   const metadata = {
     ...normalizeMetadata(link.metadata_json),
@@ -1240,7 +1326,9 @@ function buildMessage(link, enrichment) {
   const shopLabel = shopValue ? `*Loja:* ${shopValue}` : "";
 
   const groupKey = resolveProductGroupKey(productName, metadata);
-  const selectedTemplate = pickTemplateForGroup(groupKey);
+  const selectedTemplate = groupKey === "neutro"
+    ? pickTemplateForNeutralTopic(productName)
+    : pickTemplateForGroup(groupKey);
   const hookLine = cleanText(selectedTemplate.hook);
 
   return [
