@@ -26,6 +26,15 @@ const AI_COPY_API_KEY = String(process.env.AI_COPY_API_KEY || "").trim();
 const AI_COPY_MODEL = String(process.env.AI_COPY_MODEL || "gpt-4o-mini").trim();
 const AI_COPY_API_URL = String(process.env.AI_COPY_API_URL || "https://api.openai.com/v1/chat/completions").trim();
 const AI_COPY_TIMEOUT_MS = Number(process.env.AI_COPY_TIMEOUT_MS || 12000);
+const ACTIVE_START_HOUR = Number.parseInt(
+  String(process.env.ACTIVE_START_HOUR || "").trim(),
+  10
+);
+const ACTIVE_END_HOUR = Number.parseInt(
+  String(process.env.ACTIVE_END_HOUR || "").trim(),
+  10
+);
+const ACTIVE_TIMEZONE = String(process.env.ACTIVE_TIMEZONE || "America/Sao_Paulo").trim();
 
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL nao definido.");
@@ -34,6 +43,81 @@ if (!DATABASE_URL) {
 const pool = new Pool({ connectionString: DATABASE_URL });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isValidHour(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 23;
+}
+
+function getHourInTimezone(date, timeZone) {
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    hour12: false,
+    timeZone,
+  }).format(date);
+
+  const parsed = Number.parseInt(formatted, 10);
+  return Number.isNaN(parsed) ? date.getHours() : parsed;
+}
+
+function getMinutesInTimezone(date, timeZone) {
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+    timeZone,
+  }).format(date);
+
+  const match = formatted.match(/(\d{1,2}):(\d{2})/);
+  if (!match) {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+
+  const hour = Number.parseInt(match[1], 10);
+  const minute = Number.parseInt(match[2], 10);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+
+  return hour * 60 + minute;
+}
+
+function isInsideActiveWindow(date = new Date()) {
+  if (!isValidHour(ACTIVE_START_HOUR) || !isValidHour(ACTIVE_END_HOUR)) {
+    return true;
+  }
+
+  if (ACTIVE_START_HOUR === ACTIVE_END_HOUR) {
+    return true;
+  }
+
+  const hour = getHourInTimezone(date, ACTIVE_TIMEZONE);
+
+  if (ACTIVE_START_HOUR < ACTIVE_END_HOUR) {
+    return hour >= ACTIVE_START_HOUR && hour < ACTIVE_END_HOUR;
+  }
+
+  return hour >= ACTIVE_START_HOUR || hour < ACTIVE_END_HOUR;
+}
+
+function secondsUntilWindowStart(date = new Date()) {
+  if (!isValidHour(ACTIVE_START_HOUR) || !isValidHour(ACTIVE_END_HOUR)) {
+    return 60;
+  }
+
+  if (ACTIVE_START_HOUR === ACTIVE_END_HOUR) {
+    return 60;
+  }
+
+  const nowMinutes = getMinutesInTimezone(date, ACTIVE_TIMEZONE);
+  const startMinutes = ACTIVE_START_HOUR * 60;
+
+  let delta = startMinutes - nowMinutes;
+  if (delta <= 0) {
+    delta += 24 * 60;
+  }
+
+  return Math.max(60, delta * 60);
+}
 
 function prettySource(source) {
   const value = String(source || "").replace(/_/g, " ").trim();
@@ -1893,6 +1977,21 @@ async function run() {
     while (connection.shouldReconnect()) {
       if (!connection.isReady()) {
         await delay(2000);
+        continue;
+      }
+
+      if (!isInsideActiveWindow()) {
+        const waitSeconds = secondsUntilWindowStart();
+        logger.info(
+          {
+            activeStartHour: isValidHour(ACTIVE_START_HOUR) ? ACTIVE_START_HOUR : null,
+            activeEndHour: isValidHour(ACTIVE_END_HOUR) ? ACTIVE_END_HOUR : null,
+            activeTimezone: ACTIVE_TIMEZONE,
+            waitSeconds,
+          },
+          "Fora da janela ativa de envio. Aguardando proxima janela."
+        );
+        await delay(waitSeconds * 1000);
         continue;
       }
 
