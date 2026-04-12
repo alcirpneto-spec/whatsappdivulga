@@ -1722,10 +1722,11 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
     '{"templates":[{"headline":"...","hook":"..."},{"headline":"...","hook":"..."},{"headline":"...","hook":"..."}] }',
     "Regras:",
     "- Exatamente 3 templates.",
-    "- Headlines curtas e chamativas (com 1 emoji, sem exagero).",
+    "- Headline: texto curto com 1 emoji no inicio e a parte mais impactante entre asteriscos para negrito no WhatsApp. Exemplo: '🎧 *Audio sem fio com preco de achado*'",
+    "- Hook: 1 frase destacando o beneficio real. Voce pode colocar 1 palavra ou expressao chave entre asteriscos para negrito. Exemplo: 'Experiente a *liberdade* do audio sem fio.'",
     "- Use portugues do Brasil com acentuacao correta e ortografia impecavel.",
     "- Escreva no tom de um vendedor de alta performance, focado em converter.",
-    "- Hook focado em beneficio real do produto.",
+    "- Nao use titulos genericos como 'Produto que surpreende' ou 'Novidade incrivel'.",
     "- Nao inventar desconto, urgencia falsa, nem promessas irreais.",
     "- Texto natural para grupo grande de WhatsApp.",
   ].join("\n");
@@ -1749,7 +1750,7 @@ async function generateKeywordTemplatesWithAI(keyword, groupKey) {
           {
             role: "system",
             content:
-              "Voce escreve copy comercial em portugues do Brasil para WhatsApp. Sempre use acentuacao correta, linguagem natural e tom altamente persuasivo de vendedor top de performance, sem promessas falsas.",
+              "Voce escreve copy comercial em portugues do Brasil para WhatsApp. Use acentuacao correta, linguagem natural e tom persuasivo de vendedor top. Use *asteriscos* para negrito no WhatsApp: coloque o trecho mais impactante do headline entre asteriscos, e destaque 1 palavra chave no hook. Nunca use titulos genericos ou promessas falsas.",
           },
           {
             role: "user",
@@ -1871,7 +1872,6 @@ function pickTemplateForNeutralTopic(productName) {
 
 async function buildMessage(link, enrichment) {
   const sourceLabel = `*Fonte:* ${prettySource(inferSource(link.source, link.affiliate_url))}`;
-  const priceLabel = enrichment.priceText ? `*Preço:* ${enrichment.priceText}` : "";
   const productName = cleanText(enrichment.productName || link.product_name || "Produto sem nome");
   const metadata = {
     ...normalizeMetadata(link.metadata_json),
@@ -1881,7 +1881,14 @@ async function buildMessage(link, enrichment) {
   const salesValue = pickMeta(metadata.sales, metadata.sold, metadata.historical_sold);
   const shopValue = pickMeta(metadata.shop_name, metadata.shopName, metadata.store_name);
   const pricing = resolveOfferPricing(link, enrichment, metadata);
-  const originalPriceLabel = pricing.originalPriceText ? `*De:* ${pricing.originalPriceText}` : "";
+
+  const hasBothPrices = !!(pricing.originalPriceText && enrichment.priceText);
+  const originalPriceLabel = hasBothPrices ? `~${pricing.originalPriceText}~` : "";
+  const priceLabel = enrichment.priceText
+    ? hasBothPrices
+      ? `*🔥 Por: ${enrichment.priceText}*`
+      : `*Preço:* ${enrichment.priceText}`
+    : "";
   const discountLabel = pricing.discountText ? `*Desconto:* ${pricing.discountText}` : "";
   const salesCount = parseSalesCount(salesValue);
   const salesLabel = salesValue && salesCount !== null && salesCount >= 300 ? `*Vendas:* ${salesValue}` : "";
@@ -1901,12 +1908,12 @@ async function buildMessage(link, enrichment) {
   const hookLine = cleanText(selectedTemplate.hook);
 
   return [
-    selectedTemplate.headline,
+    selectedTemplate.headline.toUpperCase(),
     hookLine,
     "",
     `*Produto:* ${productName}`,
-    priceLabel,
     originalPriceLabel,
+    priceLabel,
     discountLabel,
     salesLabel,
     shopLabel,
