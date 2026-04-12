@@ -1100,6 +1100,56 @@ function matchesKeywordTerm(text, keyword) {
   return regex.test(normalizedText);
 }
 
+function findKeywordPosition(text, keyword) {
+  const normalizedText = normalizeForMatch(text);
+  const normalizedKeyword = normalizeForMatch(keyword);
+
+  if (!normalizedText || !normalizedKeyword) {
+    return -1;
+  }
+
+  const regex = new RegExp(`(^|[^a-z0-9])(${normalizedKeyword
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => escapeRegex(part))
+    .join("\\s+")})(?=[^a-z0-9]|$)`);
+  const match = regex.exec(normalizedText);
+  if (!match) {
+    return -1;
+  }
+
+  return match.index + match[1].length;
+}
+
+function findBestKeywordMatch(text, keywords) {
+  const matches = keywords
+    .map((keyword) => {
+      const position = findKeywordPosition(text, keyword);
+      if (position === -1) {
+        return null;
+      }
+
+      return {
+        keyword,
+        position,
+        wordCount: normalizeForMatch(keyword).split(/\s+/).filter(Boolean).length,
+        length: normalizeForMatch(keyword).length,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (left.position !== right.position) {
+        return left.position - right.position;
+      }
+      if (left.wordCount !== right.wordCount) {
+        return right.wordCount - left.wordCount;
+      }
+      return right.length - left.length;
+    });
+
+  return matches[0] || null;
+}
+
 const MESSAGE_TEMPLATE_GROUPS = {
   moda_feminina: {
     keywords: [
@@ -1166,6 +1216,10 @@ const MESSAGE_TEMPLATE_GROUPS = {
   },
   cozinha_utilidades: {
     keywords: [
+      "mixer",
+      "misturador",
+      "batedor",
+      "fouet",
       "marmita",
       "pote",
       "fatiador",
@@ -1182,6 +1236,7 @@ const MESSAGE_TEMPLATE_GROUPS = {
       "utensilios",
     ],
     templates: [
+      { headline: "🥣 *Mixer portátil que facilita a rotina*", hook: "Praticidade para misturar, bater e ganhar tempo na cozinha." },
       { headline: "🍳 *Cozinha mais prática com esse achado*", hook: "Utilidade que facilita sua rotina." },
       { headline: "🏠 *Item de casa em oferta hoje*", hook: "Organização e praticidade em um só produto." },
       { headline: "✨ *Achadinho útil para o dia a dia*", hook: "Perfeito para quem ama praticidade." },
@@ -1418,6 +1473,10 @@ const KEYWORD_TEMPLATE_GUIDES = {
   },
   cozinha_utilidades: {
     "marmita": { label: "Marmita", benefit: "praticidade para organizar refeições", useCase: "trabalho e rotina", appeal: "economia e organização" },
+    "mixer": { label: "Mixer", benefit: "mais agilidade no preparo", useCase: "bebidas, ovos e receitas rápidas", appeal: "praticidade na cozinha" },
+    "misturador": { label: "Misturador", benefit: "mistura rápida e sem esforço", useCase: "preparo do dia a dia", appeal: "agilidade" },
+    "batedor": { label: "Batedor", benefit: "mais facilidade no preparo", useCase: "receitas e bebidas", appeal: "praticidade" },
+    "fouet": { label: "Fouet", benefit: "mistura mais prática", useCase: "receitas rápidas", appeal: "utilidade" },
     "pote": { label: "Pote", benefit: "organização e conservação", useCase: "cozinha do dia a dia", appeal: "praticidade" },
     "fatiador": { label: "Fatiador", benefit: "mais agilidade no preparo", useCase: "cozinha diária", appeal: "facilidade" },
     "cozinha": { label: "Item de Cozinha", benefit: "rotina mais funcional", useCase: "tarefas do dia a dia", appeal: "utilidade" },
@@ -1561,16 +1620,30 @@ function resolveCategoryHintGroup(metadata) {
 }
 
 function resolveProductGroupKey(productName, metadata) {
-  const normalizedName = normalizeForMatch(productName);
+  let bestGroupMatch = null;
 
   for (const [groupKey, groupConfig] of Object.entries(MESSAGE_TEMPLATE_GROUPS)) {
     if (groupKey === "neutro") {
       continue;
     }
 
-    if (groupConfig.keywords.some((keyword) => matchesKeywordTerm(normalizedName, keyword))) {
-      return groupKey;
+    const matchedKeyword = findBestKeywordMatch(productName, groupConfig.keywords);
+    if (!matchedKeyword) {
+      continue;
     }
+
+    if (
+      !bestGroupMatch ||
+      matchedKeyword.position < bestGroupMatch.position ||
+      (matchedKeyword.position === bestGroupMatch.position && matchedKeyword.wordCount > bestGroupMatch.wordCount) ||
+      (matchedKeyword.position === bestGroupMatch.position && matchedKeyword.wordCount === bestGroupMatch.wordCount && matchedKeyword.length > bestGroupMatch.length)
+    ) {
+      bestGroupMatch = { groupKey, ...matchedKeyword };
+    }
+  }
+
+  if (bestGroupMatch) {
+    return bestGroupMatch.groupKey;
   }
 
   const categoryGroup = resolveCategoryHintGroup(metadata);
@@ -1582,22 +1655,29 @@ function resolveProductGroupKey(productName, metadata) {
 }
 
 function resolveMatchedKeyword(productName) {
-  const normalizedName = normalizeForMatch(productName);
+  let bestMatch = null;
 
   for (const [groupKey, groupConfig] of Object.entries(MESSAGE_TEMPLATE_GROUPS)) {
     if (groupKey === "neutro") {
       continue;
     }
 
-    const sortedKeywords = [...groupConfig.keywords].sort((a, b) => b.length - a.length);
-    for (const keyword of sortedKeywords) {
-      if (matchesKeywordTerm(normalizedName, keyword)) {
-        return keyword;
-      }
+    const matchedKeyword = findBestKeywordMatch(productName, groupConfig.keywords);
+    if (!matchedKeyword) {
+      continue;
+    }
+
+    if (
+      !bestMatch ||
+      matchedKeyword.position < bestMatch.position ||
+      (matchedKeyword.position === bestMatch.position && matchedKeyword.wordCount > bestMatch.wordCount) ||
+      (matchedKeyword.position === bestMatch.position && matchedKeyword.wordCount === bestMatch.wordCount && matchedKeyword.length > bestMatch.length)
+    ) {
+      bestMatch = matchedKeyword;
     }
   }
 
-  return "";
+  return bestMatch ? bestMatch.keyword : "";
 }
 
 function normalizeKeywordKey(keyword) {
